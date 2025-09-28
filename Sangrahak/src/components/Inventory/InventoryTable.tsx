@@ -1,8 +1,8 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as Icons from 'lucide-react';
-import { mockProducts } from '../../data/mockData';
 import { Product } from '../../types';
+import { apiService } from '../../services/api';
 
 const InventoryTable: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
@@ -12,36 +12,85 @@ const InventoryTable: React.FC = () => {
   });
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
+  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<string[]>(['all']);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [pagination, setPagination] = useState({
+    page: 1,
+    limit: 50,
+    total: 0,
+    pages: 0
+  });
 
-  const categories = useMemo(() => {
-    return ['all', ...Array.from(new Set(mockProducts.map(p => p.category)))];
+  // Fetch products
+  useEffect(() => {
+    fetchProducts();
+  }, [searchTerm, sortConfig, filterCategory, filterStatus, pagination.page]);
+
+  // Fetch categories
+  useEffect(() => {
+    fetchCategories();
   }, []);
 
-  const filteredAndSortedProducts = useMemo(() => {
-    let filtered = mockProducts.filter(product => {
-      const matchesSearch = product.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                           product.sku.toLowerCase().includes(searchTerm.toLowerCase());
-      const matchesCategory = filterCategory === 'all' || product.category === filterCategory;
-      const matchesStatus = filterStatus === 'all' || product.status === filterStatus;
+  const fetchProducts = async () => {
+    try {
+      setLoading(true);
+      const response = await apiService.getProducts({
+        page: pagination.page,
+        limit: pagination.limit,
+        search: searchTerm || undefined,
+        category: filterCategory !== 'all' ? filterCategory : undefined,
+        status: filterStatus !== 'all' ? filterStatus : undefined,
+        sortBy: sortConfig.key,
+        sortOrder: sortConfig.direction
+      });
       
-      return matchesSearch && matchesCategory && matchesStatus;
-    });
+      setProducts(response.products);
+      setPagination(response.pagination);
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to fetch products');
+      console.error('Error fetching products:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
 
-    return filtered.sort((a, b) => {
-      const aValue = a[sortConfig.key];
-      const bValue = b[sortConfig.key];
-      
-      if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
-      if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
-      return 0;
-    });
-  }, [searchTerm, sortConfig, filterCategory, filterStatus]);
+  const fetchCategories = async () => {
+    try {
+      const response = await apiService.getProductCategories();
+      setCategories(['all', ...response]);
+    } catch (err) {
+      console.error('Error fetching categories:', err);
+    }
+  };
 
   const handleSort = (key: keyof Product) => {
     setSortConfig(current => ({
       key,
       direction: current.key === key && current.direction === 'asc' ? 'desc' : 'asc'
     }));
+  };
+
+  const handleUpdateStock = async (productId: string, newStock: number) => {
+    try {
+      await apiService.updateProductStock(productId, newStock, 'set');
+      fetchProducts(); // Refresh the list
+    } catch (err) {
+      console.error('Error updating stock:', err);
+    }
+  };
+
+  const handleDeleteProduct = async (productId: string) => {
+    if (!confirm('Are you sure you want to delete this product?')) return;
+    
+    try {
+      await apiService.deleteProduct(productId);
+      fetchProducts(); // Refresh the list
+    } catch (err) {
+      console.error('Error deleting product:', err);
+    }
   };
 
   const getStatusBadge = (status: string) => {
@@ -73,6 +122,35 @@ const InventoryTable: React.FC = () => {
     }
   };
 
+  if (loading && products.length === 0) {
+    return (
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-8">
+        <div className="flex items-center justify-center">
+          <Icons.Loader2 className="w-8 h-8 animate-spin text-blue-600" />
+          <span className="ml-2 text-gray-600 dark:text-gray-400">Loading products...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-8">
+        <div className="text-center">
+          <Icons.AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Error Loading Products</h3>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
+          <button 
+            onClick={fetchProducts}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Try Again
+          </button>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <motion.div
       initial={{ opacity: 0 }}
@@ -84,7 +162,9 @@ const InventoryTable: React.FC = () => {
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
           <div>
             <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Inventory Management</h2>
-            <p className="text-gray-600 dark:text-gray-400 text-sm">Manage your product inventory and stock levels</p>
+            <p className="text-gray-600 dark:text-gray-400 text-sm">
+              {pagination.total} products • Page {pagination.page} of {pagination.pages}
+            </p>
           </div>
           <div className="flex items-center space-x-3">
             <button className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
@@ -178,7 +258,7 @@ const InventoryTable: React.FC = () => {
           </thead>
           <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
             <AnimatePresence>
-              {filteredAndSortedProducts.map((product, index) => (
+              {products.map((product, index) => (
                 <motion.tr
                   key={product.id}
                   initial={{ opacity: 0, y: 20 }}
@@ -217,21 +297,37 @@ const InventoryTable: React.FC = () => {
                     {product.supplier}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                    {new Date(product.lastSoldDate).toLocaleDateString()}
+                    {product.lastSoldDate ? new Date(product.lastSoldDate).toLocaleDateString() : 'N/A'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
                     ${product.price.toLocaleString()}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     <div className="flex items-center justify-end space-x-2">
-                      <button className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors">
+                      <button 
+                        className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors"
+                        title="Edit product"
+                      >
                         <Icons.Edit className="w-4 h-4" />
                       </button>
-                      <button className="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 transition-colors">
+                      <button 
+                        className="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 transition-colors"
+                        title="Update stock"
+                        onClick={() => {
+                          const newStock = prompt('Enter new stock quantity:', product.stock.toString());
+                          if (newStock && !isNaN(Number(newStock))) {
+                            handleUpdateStock(product.id, Number(newStock));
+                          }
+                        }}
+                      >
                         <Icons.Package className="w-4 h-4" />
                       </button>
-                      <button className="text-orange-600 dark:text-orange-400 hover:text-orange-800 dark:hover:text-orange-300 transition-colors">
-                        <Icons.ArrowRightLeft className="w-4 h-4" />
+                      <button 
+                        className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors"
+                        title="Delete product"
+                        onClick={() => handleDeleteProduct(product.id)}
+                      >
+                        <Icons.Trash2 className="w-4 h-4" />
                       </button>
                     </div>
                   </td>
@@ -242,10 +338,38 @@ const InventoryTable: React.FC = () => {
         </table>
       </div>
 
-      {filteredAndSortedProducts.length === 0 && (
+      {products.length === 0 && !loading && (
         <div className="p-8 text-center">
           <Icons.Package className="mx-auto w-12 h-12 text-gray-400 dark:text-gray-500 mb-4" />
           <p className="text-gray-500 dark:text-gray-400">No products found matching your criteria.</p>
+        </div>
+      )}
+
+      {/* Pagination */}
+      {pagination.pages > 1 && (
+        <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
+          <div className="text-sm text-gray-600 dark:text-gray-400">
+            Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} results
+          </div>
+          <div className="flex items-center space-x-2">
+            <button
+              onClick={() => setPagination(prev => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
+              disabled={pagination.page === 1}
+              className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            >
+              Previous
+            </button>
+            <span className="text-sm text-gray-600 dark:text-gray-400">
+              Page {pagination.page} of {pagination.pages}
+            </span>
+            <button
+              onClick={() => setPagination(prev => ({ ...prev, page: Math.min(prev.pages, prev.page + 1) }))}
+              disabled={pagination.page === pagination.pages}
+              className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            >
+              Next
+            </button>
+          </div>
         </div>
       )}
     </motion.div>

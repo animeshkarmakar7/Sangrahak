@@ -1,7 +1,18 @@
+// src/components/Dashboard/SalesChart.tsx
 import React from 'react';
 import { motion } from 'framer-motion';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
-import { mockSalesData } from '../../data/mockData';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
+
+// Static mock data for sales chart (as requested to keep forecasting static)
+const mockSalesData = [
+  { date: 'Jan 22', sales: 28000, predicted: 25500 },
+  { date: 'Jan 23', sales: 32000, predicted: 30000 },
+  { date: 'Jan 24', sales: 27500, predicted: 28000 },
+  { date: 'Jan 25', sales: 35000, predicted: 33000 },
+  { date: 'Jan 26', sales: 29000, predicted: 31000 },
+  { date: 'Jan 27', sales: 31000, predicted: 29500 },
+  { date: 'Jan 28', sales: 33500, predicted: 32000 }
+];
 
 const SalesChart: React.FC = () => {
   return (

@@ -1,21 +1,21 @@
+// src/App.tsx
 import React, { useState } from 'react';
 import { motion } from 'framer-motion';
 import Sidebar from './components/Layout/Sidebar';
 import Navbar from './components/Layout/Navbar';
-import WelcomeBanner from './components/Dashboard/WelcomeBanner';
-import KPICard from './components/Dashboard/KPICard';
-import SalesChart from './components/Dashboard/SalesChart';
-import TopSKUsChart from './components/Dashboard/TopSKUsChart';
-import AlertsPanel from './components/Dashboard/AlertsPanel';
 import InventoryTable from './components/Inventory/InventoryTable';
 import DepotGrid from './components/Depots/DepotGrid';
 import ForecastChart from './components/Forecasts/ForecastChart';
 import ReportsPanel from './components/Reports/ReportsPanel';
-import { mockKPIs } from './data/mockData';
+import DashboardContent from './components/Dashboard/DashboardContent';
 
-function App() {
+
+const AppContent: React.FC = () => {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [activeModule, setActiveModule] = useState('dashboard');
+
+  // Show loading spinner while checking authentication
+  
 
   const renderMainContent = () => {
     switch (activeModule) {
@@ -82,33 +82,7 @@ function App() {
           </motion.div>
         );
       default:
-        return (
-          <motion.div
-            key="dashboard"
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            transition={{ duration: 0.5 }}
-            className="space-y-8"
-          >
-            <WelcomeBanner />
-            
-            {/* KPI Cards */}
-            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-6">
-              {mockKPIs.map((kpi, index) => (
-                <KPICard key={index} kpi={kpi} index={index} />
-              ))}
-            </div>
-
-            {/* Charts Row */}
-            <div className="grid grid-cols-1 xl:grid-cols-2 gap-8">
-              <SalesChart />
-              <TopSKUsChart />
-            </div>
-
-            {/* Alerts Panel */}
-            <AlertsPanel />
-          </motion.div>
-        );
+        return <DashboardContent />;
     }
   };
 
@@ -132,6 +106,7 @@ function App() {
       </div>
     </div>
   );
-}
+};
 
-export default App;
+// Main App component that provides the AuthProvider
+export default AppContent;
