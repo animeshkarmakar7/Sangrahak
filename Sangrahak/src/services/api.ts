@@ -1,216 +1,157 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000/api';
+// src/services/api.ts
+import axios from 'axios';
+import { Product, Depot, Alert, KPI, TopSKU, User } from '../types';
 
-class ApiService {
-  create: any;
-  getAll: any;
-  markAsRead: any;
-  update(id: string, productData: { stock: number; reorderPoint: number; price: number; sku: string; name: string; category: string; supplier: string; }) {
-      throw new Error('Method not implemented.');
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000';
+
+// Create axios instance
+const api = axios.create({
+  baseURL: `${API_BASE_URL}/api`,
+  headers: {
+    'Content-Type': 'application/json',
+  },
+});
+
+// Add auth token to requests
+api.interceptors.request.use((config) => {
+  const token = localStorage.getItem('token');
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
   }
-  private async request(endpoint: string, options: RequestInit = {}) {
-    const url = `${API_BASE_URL}${endpoint}`;
-    
-    const config: RequestInit = {
-      headers: {
-        'Content-Type': 'application/json',
-        ...options.headers,
-      },
-      ...options,
-    };
+  return config;
+});
 
-    try {
-      const response = await fetch(url, config);
-      
-      if (!response.ok) {
-        const error = await response.json().catch(() => ({ error: 'An error occurred' }));
-        throw new Error(error.error || `HTTP error! status: ${response.status}`);
-      }
-      
-      return await response.json();
-    } catch (error) {
-      console.error('API request failed:', error);
-      throw error;
+// Handle auth errors
+api.interceptors.response.use(
+  (response) => response,
+  (error) => {
+    if (error.response?.status === 401) {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
     }
+    return Promise.reject(error);
   }
+);
 
-  // Product API methods
-  async getProducts(params: {
-    page?: number;
-    limit?: number;
+// Auth API
+export const authAPI = {
+  login: async (email: string, password: string) => {
+    const response = await api.post('/auth/login', { email, password });
+    return response.data;
+  },
+
+  register: async (userData: { name: string; email: string; password: string; role?: string }) => {
+    const response = await api.post('/auth/register', userData);
+    return response.data;
+  },
+};
+
+// Products API
+export const productsAPI = {
+  getAll: async (params?: {
     search?: string;
     category?: string;
     status?: string;
-    sortBy?: string;
-    sortOrder?: string;
-  } = {}) {
-    const queryParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== '') {
-        queryParams.append(key, value.toString());
-      }
-    });
-    
-    return this.request(`/products?${queryParams}`);
-  }
-
-  async getProduct(id: string) {
-    return this.request(`/products/${id}`);
-  }
-
-  async createProduct(productData: any) {
-    return this.request('/products', {
-      method: 'POST',
-      body: JSON.stringify(productData),
-    });
-  }
-
-  async updateProduct(id: string, productData: any) {
-    return this.request(`/products/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(productData),
-    });
-  }
-
-  async deleteProduct(id: string) {
-    return this.request(`/products/${id}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async updateProductStock(id: string, quantity: number, operation: 'add' | 'subtract' | 'set' = 'set') {
-    return this.request(`/products/${id}/stock`, {
-      method: 'PATCH',
-      body: JSON.stringify({ quantity, operation }),
-    });
-  }
-
-  async getProductCategories() {
-    return this.request('/products/categories/list');
-  }
-
-  // Depot API methods
-  async getDepots() {
-    return this.request('/depots');
-  }
-
-  async getDepot(id: string) {
-    return this.request(`/depots/${id}`);
-  }
-
-  async createDepot(depotData: any) {
-    return this.request('/depots', {
-      method: 'POST',
-      body: JSON.stringify(depotData),
-    });
-  }
-
-  async updateDepot(id: string, depotData: any) {
-    return this.request(`/depots/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(depotData),
-    });
-  }
-
-  async deleteDepot(id: string) {
-    return this.request(`/depots/${id}`, {
-      method: 'DELETE',
-    });
-  }
-
-  async getDepotStats(id: string) {
-    return this.request(`/depots/${id}/stats`);
-  }
-
-  async updateDepotUtilization(id: string, utilization: number) {
-    return this.request(`/depots/${id}/utilization`, {
-      method: 'PATCH',
-      body: JSON.stringify({ utilization }),
-    });
-  }
-
-  // Alert API methods
-  async getAlerts(params: {
     page?: number;
     limit?: number;
-    type?: string;
-    severity?: string;
-    isRead?: boolean;
-    isResolved?: boolean;
-    sortBy?: string;
-    sortOrder?: string;
-  } = {}) {
-    const queryParams = new URLSearchParams();
-    Object.entries(params).forEach(([key, value]) => {
-      if (value !== undefined && value !== '') {
-        queryParams.append(key, value.toString());
-      }
-    });
-    
-    return this.request(`/alerts?${queryParams}`);
-  }
+  }) => {
+    const response = await api.get('/products', { params });
+    return response.data;
+  },
 
-  async getAlert(id: string) {
-    return this.request(`/alerts/${id}`);
-  }
+  create: async (productData: Omit<Product, 'id' | 'lastSoldDate'>) => {
+    const response = await api.post('/products', productData);
+    return response.data;
+  },
 
-  async createAlert(alertData: any) {
-    return this.request('/alerts', {
-      method: 'POST',
-      body: JSON.stringify(alertData),
-    });
-  }
+  update: async (id: string, productData: Partial<Product>) => {
+    const response = await api.put(`/products/${id}`, productData);
+    return response.data;
+  },
 
-  async markAlertAsRead(id: string) {
-    return this.request(`/alerts/${id}/read`, {
-      method: 'PATCH',
-    });
-  }
+   updateStock: async (id: string, newStock: number, mode: 'set' | 'inc' | 'dec' = 'set') => {
+    const response = await api.patch(`/products/${id}/stock`, { stock: newStock, mode });
+    return response.data;
+  },
 
-  async resolveAlert(id: string, resolvedBy: string, resolutionNotes?: string) {
-    return this.request(`/alerts/${id}/resolve`, {
-      method: 'PATCH',
-      body: JSON.stringify({ resolvedBy, resolutionNotes }),
-    });
-  }
+  delete: async (id: string) => {
+    const response = await api.delete(`/products/${id}`);
+    return response.data;
+  },
 
-  async deleteAlert(id: string) {
-    return this.request(`/alerts/${id}`, {
-      method: 'DELETE',
-    });
-  }
+  getCategories: async () => {
+    const response = await api.get('/products/categories');
+    return response.data;
+  },
+};
 
-  async getAlertStats() {
-    return this.request('/alerts/stats/overview');
-  }
+// Depots API
+export const depotsAPI = {
+  getAll: async () => {
+    const response = await api.get('/depots');
+    return response.data;
+  },
 
-  async markMultipleAlertsAsRead(alertIds: string[]) {
-    return this.request('/alerts/bulk/read', {
-      method: 'PATCH',
-      body: JSON.stringify({ alertIds }),
-    });
-  }
+  create: async (depotData: Omit<Depot, 'id'>) => {
+    const response = await api.post('/depots', depotData);
+    return response.data;
+  },
+};
 
-  // KPI API methods
-  async getKPIs() {
-    return this.request('/kpis');
-  }
+// Alerts API
+export const alertsAPI = {
+  getAll: async (unreadOnly = false) => {
+    const response = await api.get('/alerts', { params: { unreadOnly } });
+    return response.data;
+  },
 
-  async getInventoryStats() {
-    return this.request('/kpis/inventory');
-  }
+  markAsRead: async (id: string) => {
+    const response = await api.put(`/alerts/${id}/read`);
+    return response.data;
+  },
+};
 
-  async getSalesData(days: number = 7) {
-    return this.request(`/kpis/sales?days=${days}`);
-  }
+// Dashboard API
+export const dashboardAPI = {
+  getStats: async () => {
+    const response = await api.get('/dashboard/stats');
+    return response.data;
+  },
 
-  async getTopSKUs(limit: number = 5) {
-    return this.request(`/kpis/top-skus?limit=${limit}`);
-  }
+  getTopSKUs: async () => {
+    const response = await api.get('/dashboard/top-skus');
+    return response.data;
+  },
+};
 
-  async getStats() {
-    return this.request('/kpis/depots');
-  }
-}
+// Auth utilities
+export const authUtils = {
+  setToken: (token: string) => {
+    localStorage.setItem('token', token);
+  },
 
-export const apiService = new ApiService();
-export default apiService;
+  getToken: () => {
+    return localStorage.getItem('token');
+  },
+
+  removeToken: () => {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+  },
+
+  setUser: (user: User) => {
+    localStorage.setItem('user', JSON.stringify(user));
+  },
+
+  getUser: (): User | null => {
+    const user = localStorage.getItem('user');
+    return user ? JSON.parse(user) : null;
+  },
+
+  isAuthenticated: () => {
+    return !!localStorage.getItem('token');
+  },
+};
+
+export default api;

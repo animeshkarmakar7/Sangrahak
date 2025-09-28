@@ -2,7 +2,7 @@
 import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import * as Icons from 'lucide-react';
-import alertsAPI from '../../services/api';
+import {alertsAPI} from '../../services/api';
 import { Alert } from '../../types';
 
 const AlertsPanel: React.FC = () => {

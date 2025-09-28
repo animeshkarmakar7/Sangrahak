@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as Icons from 'lucide-react';
-import productsAPI from '../../services/api';
+import { productsAPI } from '../../services/api';
 
 interface AddProductModalProps {
   onClose: () => void;
@@ -30,23 +30,21 @@ const AddProductModal: React.FC<AddProductModalProps> = ({ onClose, onProductAdd
     try {
       // Determine status based on stock and reorderPoint
       let status: 'in-stock' | 'low-stock' | 'out-of-stock' | 'overstock' = 'in-stock';
-      const stockNum = parseInt(formData.stock);
-      const reorderPointNum = parseInt(formData.reorderPoint);
+      const stock = parseInt(formData.stock);
+      const reorderPoint = parseInt(formData.reorderPoint);
 
-      if (stockNum === 0) {
+      if (stock === 0) {
         status = 'out-of-stock';
-      } else if (stockNum < reorderPointNum) {
+      } else if (stock <= reorderPoint) {
         status = 'low-stock';
-      } else if (stockNum > reorderPointNum * 2) {
-        status = 'overstock';
       } else {
         status = 'in-stock';
       }
 
       const productData = {
         ...formData,
-        stock: stockNum,
-        reorderPoint: reorderPointNum,
+        stock,
+        reorderPoint,
         price: parseFloat(formData.price),
         status
       };

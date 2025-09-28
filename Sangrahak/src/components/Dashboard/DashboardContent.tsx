@@ -6,7 +6,7 @@ import KPICard from './KPICard';
 import SalesChart from './SalesChart';
 import TopSKUsChart from './TopSKUsChart';
 import AlertsPanel from './AlertsPanel';
-import dashboardAPI from '../../services/api';
+import  { dashboardAPI } from '../../services/api';
 import { KPI, TopSKU } from '../../types';
 
 const DashboardContent: React.FC = () => {

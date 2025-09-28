@@ -1,10 +1,16 @@
+// src/components/Inventory/InventoryTable.tsx
 import React, { useState, useMemo, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as Icons from 'lucide-react';
+import { productsAPI } from '../../services/api';
 import { Product } from '../../types';
-import { apiService } from '../../services/api';
+import AddProductModal from './AddProductModal';
+import EditProductModal from './EditProductModal';
 
 const InventoryTable: React.FC = () => {
+  const [products, setProducts] = useState<Product[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [sortConfig, setSortConfig] = useState<{ key: keyof Product; direction: 'asc' | 'desc' }>({
     key: 'name',
@@ -12,59 +18,50 @@ const InventoryTable: React.FC = () => {
   });
   const [filterCategory, setFilterCategory] = useState('all');
   const [filterStatus, setFilterStatus] = useState('all');
-  const [products, setProducts] = useState<Product[]>([]);
   const [categories, setCategories] = useState<string[]>(['all']);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [pagination, setPagination] = useState({
-    page: 1,
-    limit: 50,
-    total: 0,
-    pages: 0
-  });
+  const [showAddModal, setShowAddModal] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
 
   // Fetch products
-  useEffect(() => {
-    fetchProducts();
-  }, [searchTerm, sortConfig, filterCategory, filterStatus, pagination.page]);
-
-  // Fetch categories
-  useEffect(() => {
-    fetchCategories();
-  }, []);
-
   const fetchProducts = async () => {
     try {
       setLoading(true);
-      const response = await apiService.getProducts({
-        page: pagination.page,
-        limit: pagination.limit,
+      const response = await productsAPI.getAll({
         search: searchTerm || undefined,
         category: filterCategory !== 'all' ? filterCategory : undefined,
         status: filterStatus !== 'all' ? filterStatus : undefined,
-        sortBy: sortConfig.key,
-        sortOrder: sortConfig.direction
       });
-      
       setProducts(response.products);
-      setPagination(response.pagination);
-      setError(null);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch products');
+    } catch (err: any) {
       console.error('Error fetching products:', err);
+      setError('Failed to load products');
     } finally {
       setLoading(false);
     }
   };
 
+  // Fetch categories
   const fetchCategories = async () => {
     try {
-      const response = await apiService.getProductCategories();
-      setCategories(['all', ...response]);
+      const response = await productsAPI.getCategories();
+      setCategories(['all', ...response.categories]);
     } catch (err) {
       console.error('Error fetching categories:', err);
     }
   };
+
+  useEffect(() => {
+    fetchProducts();
+    fetchCategories();
+  }, []);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      fetchProducts();
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [searchTerm, filterCategory, filterStatus]);
 
   const handleSort = (key: keyof Product) => {
     setSortConfig(current => ({
@@ -73,24 +70,37 @@ const InventoryTable: React.FC = () => {
     }));
   };
 
-  const handleUpdateStock = async (productId: string, newStock: number) => {
-    try {
-      await apiService.updateProductStock(productId, newStock, 'set');
-      fetchProducts(); // Refresh the list
-    } catch (err) {
-      console.error('Error updating stock:', err);
+  const sortedProducts = useMemo(() => {
+    return [...products].sort((a, b) => {
+      const aValue = a[sortConfig.key];
+      const bValue = b[sortConfig.key];
+      
+      if (aValue < bValue) return sortConfig.direction === 'asc' ? -1 : 1;
+      if (aValue > bValue) return sortConfig.direction === 'asc' ? 1 : -1;
+      return 0;
+    });
+  }, [products, sortConfig]);
+
+  const handleDeleteProduct = async (id: string) => {
+    if (window.confirm('Are you sure you want to delete this product?')) {
+      try {
+        await productsAPI.delete(id);
+        fetchProducts();
+      } catch (err: any) {
+        console.error('Error deleting product:', err);
+        alert('Failed to delete product');
+      }
     }
   };
 
-  const handleDeleteProduct = async (productId: string) => {
-    if (!confirm('Are you sure you want to delete this product?')) return;
-    
-    try {
-      await apiService.deleteProduct(productId);
-      fetchProducts(); // Refresh the list
-    } catch (err) {
-      console.error('Error deleting product:', err);
-    }
+  const handleProductAdded = () => {
+    setShowAddModal(false);
+    fetchProducts();
+  };
+
+  const handleProductUpdated = () => {
+    setEditingProduct(null);
+    fetchProducts();
   };
 
   const getStatusBadge = (status: string) => {
@@ -122,29 +132,18 @@ const InventoryTable: React.FC = () => {
     }
   };
 
-  if (loading && products.length === 0) {
-    return (
-      <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-8">
-        <div className="flex items-center justify-center">
-          <Icons.Loader2 className="w-8 h-8 animate-spin text-blue-600" />
-          <span className="ml-2 text-gray-600 dark:text-gray-400">Loading products...</span>
-        </div>
-      </div>
-    );
-  }
-
   if (error) {
     return (
       <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-8">
         <div className="text-center">
-          <Icons.AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h3 className="text-lg font-medium text-gray-900 dark:text-white mb-2">Error Loading Products</h3>
+          <Icons.AlertCircle className="mx-auto w-12 h-12 text-red-500 mb-4" />
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Error Loading Inventory</h3>
           <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
-          <button 
+          <button
             onClick={fetchProducts}
             className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
           >
-            Try Again
+            Retry
           </button>
         </div>
       </div>
@@ -152,228 +151,219 @@ const InventoryTable: React.FC = () => {
   }
 
   return (
-    <motion.div
-      initial={{ opacity: 0 }}
-      animate={{ opacity: 1 }}
-      className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700"
-    >
-      {/* Header */}
-      <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-          <div>
-            <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Inventory Management</h2>
-            <p className="text-gray-600 dark:text-gray-400 text-sm">
-              {pagination.total} products • Page {pagination.page} of {pagination.pages}
-            </p>
-          </div>
-          <div className="flex items-center space-x-3">
-            <button className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors">
-              <Icons.Plus className="w-4 h-4" />
-              <span>Add Product</span>
-            </button>
-            <button className="flex items-center space-x-2 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
-              <Icons.Download className="w-4 h-4" />
-              <span>Export</span>
-            </button>
+    <>
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        className="bg-white dark:bg-gray-900 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700"
+      >
+        {/* Header */}
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+            <div>
+              <h2 className="text-xl font-semibold text-gray-900 dark:text-white">Inventory Management</h2>
+              <p className="text-gray-600 dark:text-gray-400 text-sm">Manage your product inventory and stock levels</p>
+            </div>
+            <div className="flex items-center space-x-3">
+              <button
+                onClick={() => setShowAddModal(true)}
+                className="flex items-center space-x-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                <Icons.Plus className="w-4 h-4" />
+                <span>Add Product</span>
+              </button>
+              <button className="flex items-center space-x-2 px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors">
+                <Icons.Download className="w-4 h-4" />
+                <span>Export</span>
+              </button>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Filters */}
-      <div className="p-6 border-b border-gray-200 dark:border-gray-700">
-        <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-          <div className="relative flex-1 max-w-md">
-            <Icons.Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
-            <input
-              type="text"
-              placeholder="Search products or SKUs..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-gray-900 dark:text-white"
-            />
-          </div>
-          
-          <div className="flex items-center space-x-3">
-            <select
-              value={filterCategory}
-              onChange={(e) => setFilterCategory(e.target.value)}
-              className="px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
-            >
-              {categories.map(category => (
-                <option key={category} value={category}>
-                  {category === 'all' ? 'All Categories' : category}
-                </option>
-              ))}
-            </select>
+        {/* Filters */}
+        <div className="p-6 border-b border-gray-200 dark:border-gray-700">
+          <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
+            <div className="relative flex-1 max-w-md">
+              <Icons.Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-gray-400 w-5 h-5" />
+              <input
+                type="text"
+                placeholder="Search products or SKUs..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-10 pr-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all text-gray-900 dark:text-white"
+              />
+            </div>
             
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
-            >
-              <option value="all">All Status</option>
-              <option value="in-stock">In Stock</option>
-              <option value="low-stock">Low Stock</option>
-              <option value="out-of-stock">Out of Stock</option>
-              <option value="overstock">Overstock</option>
-            </select>
+            <div className="flex items-center space-x-3">
+              <select
+                value={filterCategory}
+                onChange={(e) => setFilterCategory(e.target.value)}
+                className="px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+              >
+                {categories.map(category => (
+                  <option key={category} value={category}>
+                    {category === 'all' ? 'All Categories' : category}
+                  </option>
+                ))}
+              </select>
+              
+              <select
+                value={filterStatus}
+                onChange={(e) => setFilterStatus(e.target.value)}
+                className="px-4 py-2.5 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+              >
+                <option value="all">All Status</option>
+                <option value="in-stock">In Stock</option>
+                <option value="low-stock">Low Stock</option>
+                <option value="out-of-stock">Out of Stock</option>
+                <option value="overstock">Overstock</option>
+              </select>
+            </div>
           </div>
         </div>
-      </div>
 
-      {/* Table */}
-      <div className="overflow-x-auto">
-        <table className="w-full">
-          <thead className="bg-gray-50 dark:bg-gray-800/50">
-            <tr>
-              {[
-                { key: 'sku', label: 'SKU' },
-                { key: 'name', label: 'Product Name' },
-                { key: 'category', label: 'Category' },
-                { key: 'stock', label: 'Stock' },
-                { key: 'reorderPoint', label: 'Reorder Point' },
-                { key: 'supplier', label: 'Supplier' },
-                { key: 'lastSoldDate', label: 'Last Sold' },
-                { key: 'price', label: 'Price' }
-              ].map(column => (
-                <th
-                  key={column.key}
-                  className="px-6 py-4 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
-                  onClick={() => handleSort(column.key as keyof Product)}
-                >
-                  <div className="flex items-center space-x-1">
-                    <span>{column.label}</span>
-                    {sortConfig.key === column.key && (
-                      <Icons.ChevronUp className={`w-4 h-4 transform transition-transform ${
-                        sortConfig.direction === 'desc' ? 'rotate-180' : ''
-                      }`} />
-                    )}
-                  </div>
-                </th>
-              ))}
-              <th className="px-6 py-4 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
-                Actions
-              </th>
-            </tr>
-          </thead>
-          <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
-            <AnimatePresence>
-              {products.map((product, index) => (
-                <motion.tr
-                  key={product.id}
-                  initial={{ opacity: 0, y: 20 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -20 }}
-                  transition={{ delay: index * 0.05 }}
-                  className={`hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${getRowHighlight(product.status)}`}
-                >
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="font-mono text-sm font-medium text-gray-900 dark:text-white">
-                      {product.sku}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="text-sm font-medium text-gray-900 dark:text-white">
-                      {product.name}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded">
-                      {product.category}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center space-x-2">
-                      <span className="text-sm font-medium text-gray-900 dark:text-white">
-                        {product.stock}
-                      </span>
-                      {getStatusBadge(product.status)}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                    {product.reorderPoint}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                    {product.supplier}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
-                    {product.lastSoldDate ? new Date(product.lastSoldDate).toLocaleDateString() : 'N/A'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
-                    ${product.price.toLocaleString()}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    <div className="flex items-center justify-end space-x-2">
-                      <button 
-                        className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors"
-                        title="Edit product"
-                      >
-                        <Icons.Edit className="w-4 h-4" />
-                      </button>
-                      <button 
-                        className="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 transition-colors"
-                        title="Update stock"
-                        onClick={() => {
-                          const newStock = prompt('Enter new stock quantity:', product.stock.toString());
-                          if (newStock && !isNaN(Number(newStock))) {
-                            handleUpdateStock(product.id, Number(newStock));
-                          }
-                        }}
-                      >
-                        <Icons.Package className="w-4 h-4" />
-                      </button>
-                      <button 
-                        className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors"
-                        title="Delete product"
-                        onClick={() => handleDeleteProduct(product.id)}
-                      >
-                        <Icons.Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  </td>
-                </motion.tr>
-              ))}
-            </AnimatePresence>
-          </tbody>
-        </table>
-      </div>
-
-      {products.length === 0 && !loading && (
-        <div className="p-8 text-center">
-          <Icons.Package className="mx-auto w-12 h-12 text-gray-400 dark:text-gray-500 mb-4" />
-          <p className="text-gray-500 dark:text-gray-400">No products found matching your criteria.</p>
+        {/* Table */}
+        <div className="overflow-x-auto">
+          {loading ? (
+            <div className="p-8 text-center">
+              <div className="inline-flex items-center space-x-2">
+                <Icons.Loader className="w-6 h-6 animate-spin text-blue-600" />
+                <span className="text-gray-600 dark:text-gray-400">Loading products...</span>
+              </div>
+            </div>
+          ) : (
+            <table className="w-full">
+              <thead className="bg-gray-50 dark:bg-gray-800/50">
+                <tr>
+                  {[
+                    { key: 'sku', label: 'SKU' },
+                    { key: 'name', label: 'Product Name' },
+                    { key: 'category', label: 'Category' },
+                    { key: 'stock', label: 'Stock' },
+                    { key: 'reorderPoint', label: 'Reorder Point' },
+                    { key: 'supplier', label: 'Supplier' },
+                    { key: 'lastSoldDate', label: 'Last Sold' },
+                    { key: 'price', label: 'Price' }
+                  ].map(column => (
+                    <th
+                      key={column.key}
+                      className="px-6 py-4 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors"
+                      onClick={() => handleSort(column.key as keyof Product)}
+                    >
+                      <div className="flex items-center space-x-1">
+                        <span>{column.label}</span>
+                        {sortConfig.key === column.key && (
+                          <Icons.ChevronUp className={`w-4 h-4 transform transition-transform ${
+                            sortConfig.direction === 'desc' ? 'rotate-180' : ''
+                          }`} />
+                        )}
+                      </div>
+                    </th>
+                  ))}
+                  <th className="px-6 py-4 text-right text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+                <AnimatePresence>
+                  {sortedProducts.map((product, index) => (
+                    <motion.tr
+                      key={product.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -20 }}
+                      transition={{ delay: index * 0.05 }}
+                      className={`hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors ${getRowHighlight(product.status)}`}
+                    >
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="font-mono text-sm font-medium text-gray-900 dark:text-white">
+                          {product.sku}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="text-sm font-medium text-gray-900 dark:text-white">
+                          {product.name}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <span className="px-2 py-1 text-xs font-medium bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded">
+                          {product.category}
+                        </span>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center space-x-2">
+                          <span className="text-sm font-medium text-gray-900 dark:text-white">
+                            {product.stock}
+                          </span>
+                          {getStatusBadge(product.status)}
+                        </div>
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+                        {product.reorderPoint}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+                        {product.supplier}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-600 dark:text-gray-400">
+                        {new Date(product.lastSoldDate).toLocaleDateString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 dark:text-white">
+                        ${product.price.toLocaleString()}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                        <div className="flex items-center justify-end space-x-2">
+                          <button
+                            onClick={() => setEditingProduct(product)}
+                            className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 transition-colors"
+                          >
+                            <Icons.Edit className="w-4 h-4" />
+                          </button>
+                          <button className="text-green-600 dark:text-green-400 hover:text-green-800 dark:hover:text-green-300 transition-colors">
+                            <Icons.Package className="w-4 h-4" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteProduct(product.id)}
+                            className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 transition-colors"
+                          >
+                            <Icons.Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                      </td>
+                    </motion.tr>
+                  ))}
+                </AnimatePresence>
+              </tbody>
+            </table>
+          )}
         </div>
+
+        {!loading && sortedProducts.length === 0 && (
+          <div className="p-8 text-center">
+            <Icons.Package className="mx-auto w-12 h-12 text-gray-400 dark:text-gray-500 mb-4" />
+            <p className="text-gray-500 dark:text-gray-400">No products found matching your criteria.</p>
+          </div>
+        )}
+      </motion.div>
+
+      {/* Add Product Modal */}
+      {showAddModal && (
+        <AddProductModal
+          onClose={() => setShowAddModal(false)}
+          onProductAdded={handleProductAdded}
+        />
       )}
 
-      {/* Pagination */}
-      {pagination.pages > 1 && (
-        <div className="px-6 py-4 border-t border-gray-200 dark:border-gray-700 flex items-center justify-between">
-          <div className="text-sm text-gray-600 dark:text-gray-400">
-            Showing {((pagination.page - 1) * pagination.limit) + 1} to {Math.min(pagination.page * pagination.limit, pagination.total)} of {pagination.total} results
-          </div>
-          <div className="flex items-center space-x-2">
-            <button
-              onClick={() => setPagination(prev => ({ ...prev, page: Math.max(1, prev.page - 1) }))}
-              disabled={pagination.page === 1}
-              className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-            >
-              Previous
-            </button>
-            <span className="text-sm text-gray-600 dark:text-gray-400">
-              Page {pagination.page} of {pagination.pages}
-            </span>
-            <button
-              onClick={() => setPagination(prev => ({ ...prev, page: Math.min(prev.pages, prev.page + 1) }))}
-              disabled={pagination.page === pagination.pages}
-              className="px-3 py-1 text-sm border border-gray-300 dark:border-gray-600 rounded disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
-            >
-              Next
-            </button>
-          </div>
-        </div>
+      {/* Edit Product Modal */}
+      {editingProduct && (
+        <EditProductModal
+          product={editingProduct}
+          onClose={() => setEditingProduct(null)}
+          onProductUpdated={handleProductUpdated}
+        />
       )}
-    </motion.div>
+    </>
   );
 };
 
-export default InventoryTable;
+export default InventoryTable; 

@@ -1,4 +1,3 @@
-// src/components/Inventory/EditProductModal.tsx
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as Icons from 'lucide-react';
@@ -37,7 +36,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ product, onClose, o
         price: parseFloat(formData.price)
       };
 
-      await productsAPI.update(product.id, productData);
+      await productsAPI.put(`/products/${product.id}`, productData);
       onProductUpdated();
     } catch (err: any) {
       console.error('Error updating product:', err);
