@@ -22,10 +22,11 @@ dist-ssr
 *.sw?
 .env
 
+# Ignore all model files
 Models/
 *.h5
 *.pt
 *.pkl
 
-Combinedcsvalert/
-*.csv
+# Ignore CSVs in Combinedcsvalert folder
+Combinedcsvalert/*.csv
