@@ -1,9 +1,7 @@
-// server.js
+// server.js - NO AUTHENTICATION VERSION
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
-const bcrypt = require('bcryptjs');
-const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
@@ -19,11 +17,19 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://luckyak619_db_user:lu
   useUnifiedTopology: true,
 });
 
-// User Schema
+// Connection event listeners
+mongoose.connection.on('connected', () => {
+  console.log('Connected to MongoDB');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('MongoDB connection error:', err);
+});
+
+// User Schema (simplified - no auth fields needed)
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
   role: { type: String, enum: ['admin', 'manager', 'staff'], default: 'staff' },
   avatar: String,
   createdAt: { type: Date, default: Date.now },
@@ -65,17 +71,21 @@ const depotSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now }
 });
 
-// Alert Schema
+// Alert Schema - FIXED: Added 'out-of-stock' to enum
 const alertSchema = new mongoose.Schema({
   type: { 
     type: String, 
-    enum: ['low-stock', 'demand-spike', 'capacity-warning', 'anomaly'], 
+    enum: ['low-stock', 'out-of-stock', 'demand-spike', 'capacity-warning', 'anomaly'], 
     required: true 
   },
   title: { type: String, required: true },
   description: { type: String, required: true },
   severity: { type: String, enum: ['low', 'medium', 'high'], required: true },
   isRead: { type: Boolean, default: false },
+  isResolved: { type: Boolean, default: false },
+  resolvedAt: { type: Date },
+  resolvedBy: { type: String },
+  resolutionNotes: { type: String },
   productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
   depotId: { type: mongoose.Schema.Types.ObjectId, ref: 'Depot' },
   createdAt: { type: Date, default: Date.now }
@@ -86,24 +96,6 @@ const User = mongoose.model('User', userSchema);
 const Product = mongoose.model('Product', productSchema);
 const Depot = mongoose.model('Depot', depotSchema);
 const Alert = mongoose.model('Alert', alertSchema);
-
-// Middleware to verify JWT token
-const authenticateToken = (req, res, next) => {
-  const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1];
-
-  if (!token) {
-    return res.status(401).json({ message: 'Access token required' });
-  }
-
-  jwt.verify(token, process.env.JWT_SECRET || 'fallback_secret', (err, user) => {
-    if (err) {
-      return res.status(403).json({ message: 'Invalid token' });
-    }
-    req.user = user;
-    next();
-  });
-};
 
 // Helper function to update product status based on stock
 const updateProductStatus = (product) => {
@@ -119,93 +111,31 @@ const updateProductStatus = (product) => {
   return product;
 };
 
-// Auth Routes
-app.post('/api/auth/register', async (req, res) => {
-  try {
-    const { name, email, password, role } = req.body;
+// Helper function to create alerts for low/out of stock
+const createStockAlert = async (product) => {
+  if (product.status === 'low-stock' || product.status === 'out-of-stock') {
+    // Check if alert already exists for this product
+    const existingAlert = await Alert.findOne({
+      productId: product._id,
+      type: product.status === 'out-of-stock' ? 'out-of-stock' : 'low-stock',
+      isResolved: false
+    });
 
-    // Check if user already exists
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: 'User already exists' });
+    if (!existingAlert) {
+      const alert = new Alert({
+        type: product.status === 'out-of-stock' ? 'out-of-stock' : 'low-stock',
+        title: `${product.status === 'out-of-stock' ? 'Out of Stock' : 'Low Stock'} Alert`,
+        description: `${product.name} (${product.sku}) ${product.status === 'out-of-stock' ? 'is out of stock' : `has only ${product.stock} units remaining`}`,
+        severity: product.status === 'out-of-stock' ? 'high' : 'medium',
+        productId: product._id
+      });
+      await alert.save();
     }
-
-    // Hash password
-    const saltRounds = 10;
-    const hashedPassword = await bcrypt.hash(password, saltRounds);
-
-    // Create user
-    const user = new User({
-      name,
-      email,
-      password: hashedPassword,
-      role: role || 'staff'
-    });
-
-    await user.save();
-
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || 'fallback_secret',
-      { expiresIn: '24h' }
-    );
-
-    res.status(201).json({
-      message: 'User created successfully',
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
   }
-});
+};
 
-app.post('/api/auth/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-
-    // Find user
-    const user = await User.findOne({ email });
-    if (!user) {
-      return res.status(400).json({ message: 'Invalid credentials' });
-    }
-
-    // Check password
-    const isMatch = await bcrypt.compare(password, user.password);
-    if (!isMatch) {
-      return res.status(400).json({ message: 'Invalid credentials' });
-    }
-
-    // Generate JWT token
-    const token = jwt.sign(
-      { userId: user._id, email: user.email, role: user.role },
-      process.env.JWT_SECRET || 'fallback_secret',
-      { expiresIn: '24h' }
-    );
-
-    res.json({
-      message: 'Login successful',
-      token,
-      user: {
-        id: user._id,
-        name: user.name,
-        email: user.email,
-        role: user.role
-      }
-    });
-  } catch (error) {
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// Product Routes
-app.get('/api/products', authenticateToken, async (req, res) => {
+// Product Routes - REMOVED authenticateToken middleware
+app.get('/api/products', async (req, res) => {
   try {
     const { search, category, status, page = 1, limit = 50 } = req.query;
     const query = {};
@@ -250,11 +180,12 @@ app.get('/api/products', authenticateToken, async (req, res) => {
       currentPage: page
     });
   } catch (error) {
+    console.error('Error fetching products:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-app.post('/api/products', authenticateToken, async (req, res) => {
+app.post('/api/products', async (req, res) => {
   try {
     const productData = req.body;
     let product = new Product(productData);
@@ -264,17 +195,8 @@ app.post('/api/products', authenticateToken, async (req, res) => {
     
     await product.save();
 
-    // Create low stock alert if needed
-    if (product.status === 'low-stock' || product.status === 'out-of-stock') {
-      const alert = new Alert({
-        type: 'low-stock',
-        title: `${product.status === 'out-of-stock' ? 'Out of Stock' : 'Low Stock'} Alert`,
-        description: `${product.name} (${product.sku}) ${product.status === 'out-of-stock' ? 'is out of stock' : `has only ${product.stock} units remaining`}`,
-        severity: product.status === 'out-of-stock' ? 'high' : 'medium',
-        productId: product._id
-      });
-      await alert.save();
-    }
+    // Create alert if needed
+    await createStockAlert(product);
 
     res.status(201).json({
       message: 'Product created successfully',
@@ -292,6 +214,7 @@ app.post('/api/products', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error creating product:', error);
     if (error.code === 11000) {
       res.status(400).json({ message: 'SKU already exists' });
     } else {
@@ -300,7 +223,7 @@ app.post('/api/products', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/products/:id', authenticateToken, async (req, res) => {
+app.put('/api/products/:id', async (req, res) => {
   try {
     const product = await Product.findById(req.params.id);
     if (!product) {
@@ -314,6 +237,9 @@ app.put('/api/products/:id', authenticateToken, async (req, res) => {
     updateProductStatus(product);
     
     await product.save();
+
+    // Create alert if needed
+    await createStockAlert(product);
 
     res.json({
       message: 'Product updated successfully',
@@ -331,35 +257,41 @@ app.put('/api/products/:id', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error updating product:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-app.delete('/api/products/:id', authenticateToken, async (req, res) => {
+app.delete('/api/products/:id', async (req, res) => {
   try {
     const product = await Product.findByIdAndDelete(req.params.id);
     if (!product) {
       return res.status(404).json({ message: 'Product not found' });
     }
 
+    // Also delete related alerts
+    await Alert.deleteMany({ productId: req.params.id });
+
     res.json({ message: 'Product deleted successfully' });
   } catch (error) {
+    console.error('Error deleting product:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
 // Get categories for filter
-app.get('/api/products/categories', authenticateToken, async (req, res) => {
+app.get('/api/products/categories', async (req, res) => {
   try {
     const categories = await Product.distinct('category');
     res.json({ categories });
   } catch (error) {
+    console.error('Error fetching categories:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
 // Depot Routes
-app.get('/api/depots', authenticateToken, async (req, res) => {
+app.get('/api/depots', async (req, res) => {
   try {
     const depots = await Depot.find().sort({ updatedAt: -1 });
     
@@ -375,11 +307,12 @@ app.get('/api/depots', authenticateToken, async (req, res) => {
       }))
     });
   } catch (error) {
+    console.error('Error fetching depots:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-app.post('/api/depots', authenticateToken, async (req, res) => {
+app.post('/api/depots', async (req, res) => {
   try {
     const depot = new Depot(req.body);
     
@@ -408,21 +341,29 @@ app.post('/api/depots', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error creating depot:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
 // Alert Routes
-app.get('/api/alerts', authenticateToken, async (req, res) => {
+app.get('/api/alerts', async (req, res) => {
   try {
-    const { unreadOnly = false } = req.query;
-    const query = unreadOnly === 'true' ? { isRead: false } : {};
+    const { unreadOnly = false, page = 1, limit = 20 } = req.query;
+    const query = {};
+    
+    if (unreadOnly === 'true') {
+      query.isRead = false;
+    }
     
     const alerts = await Alert.find(query)
       .populate('productId', 'name sku')
       .populate('depotId', 'name')
       .sort({ createdAt: -1 })
-      .limit(20);
+      .limit(limit * 1)
+      .skip((page - 1) * limit);
+
+    const total = await Alert.countDocuments(query);
 
     res.json({
       alerts: alerts.map(alert => ({
@@ -432,17 +373,22 @@ app.get('/api/alerts', authenticateToken, async (req, res) => {
         description: alert.description,
         severity: alert.severity,
         isRead: alert.isRead,
+        isResolved: alert.isResolved,
         timestamp: alert.createdAt.toISOString(),
         product: alert.productId,
         depot: alert.depotId
-      }))
+      })),
+      total,
+      pages: Math.ceil(total / limit),
+      currentPage: page
     });
   } catch (error) {
+    console.error('Error fetching alerts:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
-app.put('/api/alerts/:id/read', authenticateToken, async (req, res) => {
+app.put('/api/alerts/:id/read', async (req, res) => {
   try {
     const alert = await Alert.findByIdAndUpdate(
       req.params.id,
@@ -456,12 +402,13 @@ app.put('/api/alerts/:id/read', authenticateToken, async (req, res) => {
 
     res.json({ message: 'Alert marked as read' });
   } catch (error) {
+    console.error('Error updating alert:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
 // Dashboard Stats
-app.get('/api/dashboard/stats', authenticateToken, async (req, res) => {
+app.get('/api/dashboard/stats', async (req, res) => {
   try {
     const totalProducts = await Product.countDocuments();
     const lowStockCount = await Product.countDocuments({ status: 'low-stock' });
@@ -523,12 +470,13 @@ app.get('/api/dashboard/stats', authenticateToken, async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('Error fetching dashboard stats:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
 });
 
 // Get top SKUs by stock level (for charts)
-app.get('/api/dashboard/top-skus', authenticateToken, async (req, res) => {
+app.get('/api/dashboard/top-skus', async (req, res) => {
   try {
     const products = await Product.find()
       .sort({ stock: -1 })
@@ -544,13 +492,22 @@ app.get('/api/dashboard/top-skus', authenticateToken, async (req, res) => {
 
     res.json({ topSKUs });
   } catch (error) {
+    console.error('Error fetching top SKUs:', error);
     res.status(500).json({ message: 'Server error', error: error.message });
   }
+});
+
+// Health check endpoint
+app.get('/api/health', (req, res) => {
+  res.json({ 
+    status: 'OK', 
+    timestamp: new Date().toISOString(),
+    database: mongoose.connection.readyState === 1 ? 'Connected' : 'Disconnected'
+  });
 });
 
 // Start server
 app.listen(PORT, () => {
   console.log(`Server running on port ${PORT}`);
+  console.log(`Health check: http://localhost:${PORT}/api/health`);
 });
-
-module.exports = app;

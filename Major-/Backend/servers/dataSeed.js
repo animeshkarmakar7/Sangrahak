@@ -1,6 +1,5 @@
-// seedData.js
+// seedData.js - UPDATED WITH FIXED ALERT SCHEMA
 const mongoose = require('mongoose');
-const bcrypt = require('bcryptjs');
 require('dotenv').config();
 
 // Connect to MongoDB
@@ -9,11 +8,10 @@ mongoose.connect(process.env.MONGODB_URI || 'mongodb://localhost:27017/inventroo
   useUnifiedTopology: true,
 });
 
-// Schemas (same as in server.js)
+// Schemas (updated to match server.js)
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
-  password: { type: String, required: true },
   role: { type: String, enum: ['admin', 'manager', 'staff'], default: 'staff' },
   avatar: String,
   createdAt: { type: Date, default: Date.now },
@@ -53,16 +51,21 @@ const depotSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now }
 });
 
+// FIXED: Added 'out-of-stock' to alert type enum and added missing fields
 const alertSchema = new mongoose.Schema({
   type: { 
     type: String, 
-    enum: ['low-stock','out-of-stock' , 'demand-spike', 'capacity-warning', 'anomaly'], 
+    enum: ['low-stock', 'out-of-stock', 'demand-spike', 'capacity-warning', 'anomaly'], 
     required: true 
   },
   title: { type: String, required: true },
   description: { type: String, required: true },
   severity: { type: String, enum: ['low', 'medium', 'high'], required: true },
   isRead: { type: Boolean, default: false },
+  isResolved: { type: Boolean, default: false },
+  resolvedAt: { type: Date },
+  resolvedBy: { type: String },
+  resolutionNotes: { type: String },
   productId: { type: mongoose.Schema.Types.ObjectId, ref: 'Product' },
   depotId: { type: mongoose.Schema.Types.ObjectId, ref: 'Depot' },
   createdAt: { type: Date, default: Date.now }
@@ -83,17 +86,15 @@ const seedData = async () => {
 
     console.log('Cleared existing data');
 
-    // Create admin user
-    const hashedPassword = await bcrypt.hash('admin123', 10);
+    // Create admin user (no password needed since no auth)
     const adminUser = new User({
       name: 'Sarah Chen',
       email: 'admin@inventroops.com',
-      password: hashedPassword,
       role: 'admin'
     });
     await adminUser.save();
 
-    // Create sample products
+    // Create sample products with more variety
     const products = [
       {
         sku: 'ELC-001',
@@ -174,6 +175,46 @@ const seedData = async () => {
         supplier: 'Adidas',
         price: 180,
         status: 'low-stock'
+      },
+      {
+        sku: 'SPT-009',
+        name: 'Wilson Tennis Racket Pro',
+        category: 'Sports',
+        stock: 22,
+        reorderPoint: 10,
+        supplier: 'Wilson',
+        price: 299,
+        status: 'in-stock'
+      },
+      {
+        sku: 'BKS-010',
+        name: 'JavaScript: The Definitive Guide',
+        category: 'Books',
+        stock: 5,
+        reorderPoint: 15,
+        supplier: 'O\'Reilly Media',
+        price: 59.99,
+        status: 'low-stock'
+      },
+      {
+        sku: 'ELC-011',
+        name: 'AirPods Pro (3rd Gen)',
+        category: 'Electronics',
+        stock: 0,
+        reorderPoint: 25,
+        supplier: 'Apple Inc.',
+        price: 249,
+        status: 'out-of-stock'
+      },
+      {
+        sku: 'HME-012',
+        name: 'Instant Pot Duo 7-in-1',
+        category: 'Home Goods',
+        stock: 35,
+        reorderPoint: 15,
+        supplier: 'Instant Brands',
+        price: 99.99,
+        status: 'in-stock'
       }
     ];
 
@@ -219,7 +260,7 @@ const seedData = async () => {
     const savedDepots = await Depot.insertMany(depots);
     console.log('Created sample depots');
 
-    // Create sample alerts
+    // Create sample alerts - FIXED: Using correct alert types and structure
     const alerts = [
       {
         type: 'low-stock',
@@ -227,6 +268,7 @@ const seedData = async () => {
         description: 'Nike Air Max 270 (APL-002) has only 8 units remaining',
         severity: 'high',
         isRead: false,
+        isResolved: false,
         productId: savedProducts[1]._id
       },
       {
@@ -235,6 +277,7 @@ const seedData = async () => {
         description: 'Dyson V15 Detect (HME-003) is completely out of stock',
         severity: 'high',
         isRead: false,
+        isResolved: false,
         productId: savedProducts[2]._id
       },
       {
@@ -243,6 +286,7 @@ const seedData = async () => {
         description: 'Southeast Facility is at 95% capacity utilization',
         severity: 'high',
         isRead: true,
+        isResolved: false,
         depotId: savedDepots[3]._id
       },
       {
@@ -251,19 +295,59 @@ const seedData = async () => {
         description: 'Adidas Ultraboost 22 (APL-008) has only 3 units remaining',
         severity: 'medium',
         isRead: false,
+        isResolved: false,
         productId: savedProducts[7]._id
+      },
+      {
+        type: 'out-of-stock',
+        title: 'Critical Stock Alert',
+        description: 'AirPods Pro (3rd Gen) (ELC-011) is completely out of stock',
+        severity: 'high',
+        isRead: false,
+        isResolved: false,
+        productId: savedProducts[10]._id
+      },
+      {
+        type: 'low-stock',
+        title: 'Low Stock Notice',
+        description: 'JavaScript: The Definitive Guide (BKS-010) has only 5 units remaining',
+        severity: 'low',
+        isRead: false,
+        isResolved: false,
+        productId: savedProducts[9]._id
+      },
+      {
+        type: 'demand-spike',
+        title: 'Demand Spike Detected',
+        description: 'Unusual demand increase detected for Electronics category',
+        severity: 'medium',
+        isRead: true,
+        isResolved: false
+      },
+      {
+        type: 'anomaly',
+        title: 'Inventory Anomaly',
+        description: 'Irregular stock movement pattern detected in West Coast Hub',
+        severity: 'low',
+        isRead: false,
+        isResolved: false,
+        depotId: savedDepots[1]._id
       }
     ];
 
     await Alert.insertMany(alerts);
     console.log('Created sample alerts');
 
-    console.log('Database seeded successfully!');
-    console.log('Admin user created: admin@inventroops.com / admin123');
+    console.log('✅ Database seeded successfully!');
+    console.log('📊 Sample data created:');
+    console.log(`   - ${savedProducts.length} products`);
+    console.log(`   - ${savedDepots.length} depots`);
+    console.log(`   - ${alerts.length} alerts`);
+    console.log('   - 1 admin user (Sarah Chen)');
     
     process.exit(0);
   } catch (error) {
-    console.error('Error seeding database:', error);
+    console.error('❌ Error seeding database:', error);
     process.exit(1);
   }
 };
