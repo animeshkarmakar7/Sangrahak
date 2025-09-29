@@ -29,4 +29,5 @@ Models/
 *.pkl
 
 # Ignore CSVs in Combinedcsvalert folder
-Combinedcsvalert/*.csv
+/Combinedcsvalert/*.csv
+
