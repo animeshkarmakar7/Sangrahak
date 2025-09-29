@@ -79,12 +79,11 @@ const Alert = mongoose.model('Alert', alertSchema);
 const seedData = async () => {
   try {
     // Clear existing data
-    await User.deleteMany({});
-    await Product.deleteMany({});
-    await Depot.deleteMany({});
-    await Alert.deleteMany({});
-
-    console.log('Cleared existing data');
+   const existingProducts = await Product.countDocuments();
+    if (existingProducts > 0) {
+      console.log('Database already seeded. Skipping...');
+      process.exit(0);
+    }
 
     // Create admin user (no password needed since no auth)
     const adminUser = new User({

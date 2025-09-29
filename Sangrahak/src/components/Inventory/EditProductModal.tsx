@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import * as Icons from 'lucide-react';
-import productsAPI from '../../services/api';
+import {productsAPI} from '../../services/api';
 import { Product } from '../../types';
 
 interface EditProductModalProps {
@@ -36,7 +36,7 @@ const EditProductModal: React.FC<EditProductModalProps> = ({ product, onClose, o
         price: parseFloat(formData.price)
       };
 
-      await productsAPI.put(`/products/${product.id}`, productData);
+      await productsAPI.update(`/products/${product.id}`, productData);
       onProductUpdated();
     } catch (err: any) {
       console.error('Error updating product:', err);
