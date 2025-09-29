@@ -2,9 +2,16 @@ import pandas as pd
 import numpy as np
 import joblib
 import xgboost as xgb
+from pymongo import MongoClient
+from datetime import datetime, timedelta
 from sklearn.preprocessing import LabelEncoder
 import os
 
+
+MONGODB_URI = "mongodb+srv://luckyak619_db_user:luckyak619@cluster0.lcmjwhw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
+client = MongoClient(MONGODB_URI)
+db = client['inventroops']
+forecasts_collection = db['forecasts']
 # ----------------------------
 # 1️⃣ Load new input-only test dataset
 # ----------------------------

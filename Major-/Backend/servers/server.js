@@ -26,6 +26,195 @@ mongoose.connection.on('error', (err) => {
   console.error('MongoDB connection error:', err);
 });
 
+// Add these routes to your server.js file
+
+// Forecast/Prediction Schema
+const forecastSchema = new mongoose.Schema({
+  itemId: { type: String, required: true },
+  productName: { type: String, required: true },
+  sku: { type: String, required: true },
+  currentStock: { type: Number, required: true },
+  stockStatusPred: { type: String, required: true },
+  priorityPred: { type: String, required: true },
+  alert: { type: String, required: true },
+  forecastData: [{
+    date: { type: String, required: true },
+    predicted: { type: Number, required: true },
+    actual: { type: Number },
+    confidence: { type: Number }
+  }],
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+const Forecast = mongoose.model('Forecast', forecastSchema);
+
+// GET all forecasts with filtering
+app.get('/api/forecasts', async (req, res) => {
+  try {
+    const { sku, limit = 50, sortBy = 'updatedAt' } = req.query;
+    const query = {};
+
+    if (sku) {
+      query.sku = sku;
+    }
+
+    const forecasts = await Forecast.find(query)
+      .sort({ [sortBy]: -1 })
+      .limit(parseInt(limit));
+
+    res.json({
+      forecasts: forecasts.map(forecast => ({
+        id: forecast._id,
+        itemId: forecast.itemId,
+        productName: forecast.productName,
+        sku: forecast.sku,
+        currentStock: forecast.currentStock,
+        stockStatusPred: forecast.stockStatusPred,
+        priorityPred: forecast.priorityPred,
+        alert: forecast.alert,
+        forecastData: forecast.forecastData,
+        updatedAt: forecast.updatedAt
+      })),
+      total: forecasts.length
+    });
+  } catch (error) {
+    console.error('Error fetching forecasts:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET forecast by SKU or Item ID
+app.get('/api/forecasts/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    
+    // Try to find by SKU first, then by itemId
+    let forecast = await Forecast.findOne({ sku: identifier });
+    if (!forecast) {
+      forecast = await Forecast.findOne({ itemId: identifier });
+    }
+    
+    if (!forecast) {
+      return res.status(404).json({ message: 'Forecast not found' });
+    }
+
+    res.json({
+      id: forecast._id,
+      itemId: forecast.itemId,
+      productName: forecast.productName,
+      sku: forecast.sku,
+      currentStock: forecast.currentStock,
+      stockStatusPred: forecast.stockStatusPred,
+      priorityPred: forecast.priorityPred,
+      alert: forecast.alert,
+      forecastData: forecast.forecastData,
+      updatedAt: forecast.updatedAt
+    });
+  } catch (error) {
+    console.error('Error fetching forecast:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST - Create or update forecast
+app.post('/api/forecasts', async (req, res) => {
+  try {
+    const { itemId, sku } = req.body;
+    
+    // Check if forecast already exists
+    let forecast = await Forecast.findOne({ $or: [{ itemId }, { sku }] });
+    
+    if (forecast) {
+      // Update existing forecast
+      Object.assign(forecast, req.body);
+      forecast.updatedAt = new Date();
+      await forecast.save();
+    } else {
+      // Create new forecast
+      forecast = new Forecast(req.body);
+      await forecast.save();
+    }
+
+    res.status(201).json({
+      message: 'Forecast saved successfully',
+      forecast: {
+        id: forecast._id,
+        itemId: forecast.itemId,
+        productName: forecast.productName,
+        sku: forecast.sku,
+        currentStock: forecast.currentStock,
+        stockStatusPred: forecast.stockStatusPred,
+        priorityPred: forecast.priorityPred,
+        alert: forecast.alert,
+        forecastData: forecast.forecastData
+      }
+    });
+  } catch (error) {
+    console.error('Error saving forecast:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET forecast insights/analytics
+app.get('/api/forecasts/analytics/insights', async (req, res) => {
+  try {
+    const forecasts = await Forecast.find();
+    
+    // Calculate insights
+    const highPriorityCount = forecasts.filter(f => 
+      f.priorityPred === 'High' || f.priorityPred === 'Very High'
+    ).length;
+    
+    const understockCount = forecasts.filter(f => 
+      f.stockStatusPred === 'Understock'
+    ).length;
+    
+    const avgStockLevel = forecasts.length > 0
+      ? forecasts.reduce((sum, f) => sum + f.currentStock, 0) / forecasts.length
+      : 0;
+
+    // Get top items needing restock
+    const topReorders = forecasts
+      .filter(f => f.priorityPred === 'High' || f.priorityPred === 'Very High')
+      .sort((a, b) => {
+        const priorityOrder = { 'Very High': 3, 'High': 2, 'Medium': 1, 'Low': 0 };
+        return (priorityOrder[b.priorityPred] || 0) - (priorityOrder[a.priorityPred] || 0);
+      })
+      .slice(0, 5)
+      .map(f => ({
+        sku: f.sku,
+        name: f.productName,
+        currentStock: f.currentStock,
+        priority: f.priorityPred,
+        predictedDemand: f.forecastData.length > 0 
+          ? Math.round(f.forecastData.reduce((sum, d) => sum + d.predicted, 0))
+          : 0
+      }));
+
+    res.json({
+      insights: {
+        highPriorityCount,
+        understockCount,
+        avgStockLevel: Math.round(avgStockLevel),
+        totalForecasts: forecasts.length
+      },
+      topReorders,
+      alerts: forecasts
+        .filter(f => f.alert !== 'Stock OK')
+        .map(f => ({
+          sku: f.sku,
+          productName: f.productName,
+          alert: f.alert,
+          priority: f.priorityPred
+        }))
+    });
+  } catch (error) {
+    console.error('Error fetching forecast insights:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
 // User Schema (simplified - no auth fields needed)
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },

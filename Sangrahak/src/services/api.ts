@@ -60,6 +60,13 @@ export const productsAPI = {
     return response.data;
   },
 
+    getById: async (id: string) => {
+    const response = await api.get(`/products/${id}`);
+    return response.data;
+  },
+
+  
+
   create: async (productData: Omit<Product, 'id' | 'lastSoldDate'>) => {
     const response = await api.post('/products', productData);
     return response.data;

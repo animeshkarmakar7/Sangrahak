@@ -1,12 +1,115 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { motion } from 'framer-motion';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import * as Icons from 'lucide-react';
-import { mockForecastData, mockTopSKUs } from '../../data/mockData';
+import forecastAPI, { Forecast, ForecastAnalytics } from '../../services/forecastAPI';
+import { productsAPI } from '../../services/api';
 
 const ForecastChart: React.FC = () => {
-  const [selectedSKU, setSelectedSKU] = useState('ELC-001');
+  const [forecasts, setForecasts] = useState<Forecast[]>([]);
+  const [selectedForecast, setSelectedForecast] = useState<Forecast | null>(null);
+  const [analytics, setAnalytics] = useState<ForecastAnalytics | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [timeFrame, setTimeFrame] = useState('30days');
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+
+      // Fetch all forecasts
+      const forecastsResponse = await forecastAPI.getAll({ limit: 50 });
+      setForecasts(forecastsResponse.forecasts);
+
+      // Fetch analytics
+      const analyticsData = await forecastAPI.getAnalytics();
+      setAnalytics(analyticsData);
+
+      // Set first forecast as selected
+      if (forecastsResponse.forecasts.length > 0) {
+        setSelectedForecast(forecastsResponse.forecasts[0]);
+      }
+    } catch (err: any) {
+      console.error('Error fetching forecast data:', err);
+      setError('Failed to load forecast data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleForecastChange = async (sku: string) => {
+    try {
+      const forecast = await forecastAPI.getById(sku);
+      setSelectedForecast(forecast);
+    } catch (err) {
+      console.error('Error fetching forecast:', err);
+    }
+  };
+
+  const getFilteredData = () => {
+    if (!selectedForecast) return [];
+
+    const days = timeFrame === '7days' ? 7 : timeFrame === '30days' ? 30 : 90;
+    return selectedForecast.forecastData.slice(-days);
+  };
+
+  const getSeverityColor = (priority: string) => {
+    switch (priority.toLowerCase()) {
+      case 'very high':
+      case 'high':
+        return 'from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400';
+      case 'medium':
+        return 'from-yellow-50 to-orange-50 dark:from-yellow-900/20 dark:to-orange-900/20 border-yellow-200 dark:border-yellow-800 text-yellow-700 dark:text-yellow-400';
+      default:
+        return 'from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 border-green-200 dark:border-green-800 text-green-700 dark:text-green-400';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-96">
+        <div className="text-center">
+          <Icons.Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
+          <p className="text-gray-600 dark:text-gray-400">Loading forecast data...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="bg-white dark:bg-gray-900 rounded-2xl p-8 border border-gray-200 dark:border-gray-700">
+        <div className="text-center">
+          <Icons.AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Error Loading Forecasts</h3>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
+          <button
+            onClick={fetchData}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (!forecasts.length) {
+    return (
+      <div className="bg-white dark:bg-gray-900 rounded-2xl p-8 border border-gray-200 dark:border-gray-700">
+        <div className="text-center">
+          <Icons.TrendingUp className="w-12 h-12 text-gray-400 mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No Forecast Data Available</h3>
+          <p className="text-gray-600 dark:text-gray-400">Run the prediction model to generate forecasts.</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -17,12 +120,14 @@ const ForecastChart: React.FC = () => {
         </div>
         <div className="flex items-center space-x-3">
           <select
-            value={selectedSKU}
-            onChange={(e) => setSelectedSKU(e.target.value)}
+            value={selectedForecast?.sku || ''}
+            onChange={(e) => handleForecastChange(e.target.value)}
             className="px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
           >
-            {mockTopSKUs.map(sku => (
-              <option key={sku.sku} value={sku.sku}>{sku.name}</option>
+            {forecasts.map(forecast => (
+              <option key={forecast.sku} value={forecast.sku}>
+                {forecast.productName} ({forecast.sku})
+              </option>
             ))}
           </select>
           <select
@@ -65,57 +170,61 @@ const ForecastChart: React.FC = () => {
             </div>
           </div>
 
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={mockForecastData}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
-                <XAxis 
-                  dataKey="date" 
-                  stroke="#9ca3af"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <YAxis 
-                  stroke="#9ca3af"
-                  fontSize={12}
-                  tickLine={false}
-                  axisLine={false}
-                />
-                <Tooltip
-                  contentStyle={{
-                    backgroundColor: 'rgba(255, 255, 255, 0.95)',
-                    border: 'none',
-                    borderRadius: '12px',
-                    boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)',
-                  }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="confidence"
-                  stroke="none"
-                  fill="#a855f7"
-                  fillOpacity={0.1}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="actual"
-                  stroke="#3b82f6"
-                  strokeWidth={3}
-                  dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
-                  connectNulls={false}
-                />
-                <Line
-                  type="monotone"
-                  dataKey="predicted"
-                  stroke="#10b981"
-                  strokeWidth={3}
-                  strokeDasharray="5 5"
-                  dot={{ fill: '#10b981', strokeWidth: 2, r: 4 }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
+          {selectedForecast && (
+            <div className="h-80">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={getFilteredData()}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
+                  <XAxis 
+                    dataKey="date" 
+                    stroke="#9ca3af"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                    tickFormatter={(value) => new Date(value).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                  />
+                  <YAxis 
+                    stroke="#9ca3af"
+                    fontSize={12}
+                    tickLine={false}
+                    axisLine={false}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      backgroundColor: 'rgba(255, 255, 255, 0.95)',
+                      border: 'none',
+                      borderRadius: '12px',
+                      boxShadow: '0 10px 25px rgba(0, 0, 0, 0.1)',
+                    }}
+                    labelFormatter={(value) => new Date(value).toLocaleDateString()}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="confidence"
+                    stroke="none"
+                    fill="#a855f7"
+                    fillOpacity={0.1}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="actual"
+                    stroke="#3b82f6"
+                    strokeWidth={3}
+                    dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
+                    connectNulls={false}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="predicted"
+                    stroke="#10b981"
+                    strokeWidth={3}
+                    strokeDasharray="5 5"
+                    dot={{ fill: '#10b981', strokeWidth: 2, r: 4 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          )}
         </motion.div>
 
         {/* Insights Panel */}
@@ -131,53 +240,98 @@ const ForecastChart: React.FC = () => {
           </div>
 
           <div className="space-y-4">
-            <div className="p-4 bg-gradient-to-r from-green-50 to-emerald-50 dark:from-green-900/20 dark:to-emerald-900/20 rounded-lg border border-green-200 dark:border-green-800">
-              <div className="flex items-center space-x-2 mb-2">
-                <Icons.TrendingUp className="w-5 h-5 text-green-600 dark:text-green-400" />
-                <span className="font-medium text-green-800 dark:text-green-300">Demand Spike Expected</span>
+            {/* Current Product Status */}
+            {selectedForecast && (
+              <div className={`p-4 bg-gradient-to-r rounded-lg border ${getSeverityColor(selectedForecast.priorityPred)}`}>
+                <div className="flex items-center space-x-2 mb-2">
+                  {selectedForecast.priorityPred === 'High' || selectedForecast.priorityPred === 'Very High' ? (
+                    <Icons.AlertTriangle className="w-5 h-5" />
+                  ) : (
+                    <Icons.CheckCircle className="w-5 h-5" />
+                  )}
+                  <span className="font-medium">{selectedForecast.stockStatusPred}</span>
+                </div>
+                <p className="text-sm">
+                  Priority: <strong>{selectedForecast.priorityPred}</strong>
+                </p>
+                <p className="text-sm mt-1">
+                  Current Stock: <strong>{selectedForecast.currentStock}</strong>
+                </p>
               </div>
-              <p className="text-green-700 dark:text-green-400 text-sm">
-                iPhone 15 Pro Max demand expected to increase by 35% next week
-              </p>
-            </div>
+            )}
 
-            <div className="p-4 bg-gradient-to-r from-yellow-50 to-orange-50 dark:from-yellow-900/20 dark:to-orange-900/20 rounded-lg border border-yellow-200 dark:border-yellow-800">
-              <div className="flex items-center space-x-2 mb-2">
-                <Icons.AlertTriangle className="w-5 h-5 text-yellow-600 dark:text-yellow-400" />
-                <span className="font-medium text-yellow-800 dark:text-yellow-300">Reorder Alert</span>
+            {/* Alert Message */}
+            {selectedForecast && selectedForecast.alert !== 'Stock OK' && (
+              <div className="p-4 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 rounded-lg border border-red-200 dark:border-red-800">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Icons.AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+                  <span className="font-medium text-red-800 dark:text-red-300">Action Required</span>
+                </div>
+                <p className="text-red-700 dark:text-red-400 text-sm">
+                  {selectedForecast.alert}
+                </p>
               </div>
-              <p className="text-yellow-700 dark:text-yellow-400 text-sm">
-                5 SKUs need restocking based on predicted demand
-              </p>
-            </div>
+            )}
 
-            <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-              <div className="flex items-center space-x-2 mb-2">
-                <Icons.Calendar className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                <span className="font-medium text-blue-800 dark:text-blue-300">Seasonal Trend</span>
+            {/* Analytics Summary */}
+            {analytics && (
+              <div className="p-4 bg-gradient-to-r from-blue-50 to-indigo-50 dark:from-blue-900/20 dark:to-indigo-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
+                <div className="flex items-center space-x-2 mb-3">
+                  <Icons.BarChart3 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
+                  <span className="font-medium text-blue-800 dark:text-blue-300">System Overview</span>
+                </div>
+                <div className="space-y-2 text-sm text-blue-700 dark:text-blue-400">
+                  <div className="flex justify-between">
+                    <span>High Priority Items:</span>
+                    <strong>{analytics.insights.highPriorityCount}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Understock Items:</span>
+                    <strong>{analytics.insights.understockCount}</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Avg Stock Level:</span>
+                    <strong>{analytics.insights.avgStockLevel}</strong>
+                  </div>
+                </div>
               </div>
-              <p className="text-blue-700 dark:text-blue-400 text-sm">
-                Electronics category showing typical Q1 seasonal pattern
-              </p>
-            </div>
+            )}
           </div>
 
           <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
             <h4 className="font-medium text-gray-900 dark:text-white mb-4">Top Reorders This Week</h4>
             <div className="space-y-3">
-              {mockTopSKUs.slice(0, 3).map((item, index) => (
+              {analytics?.topReorders.slice(0, 3).map((item, index) => (
                 <div key={item.sku} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
                   <div>
                     <p className="font-medium text-gray-900 dark:text-white text-sm">{item.sku}</p>
+                    <p className="text-gray-500 dark:text-gray-400 text-xs">{item.name}</p>
                     <p className="text-gray-500 dark:text-gray-400 text-xs">Current: {item.currentStock}</p>
                   </div>
                   <div className="text-right">
                     <p className="font-semibold text-indigo-600 dark:text-indigo-400">{item.predictedDemand}</p>
                     <p className="text-gray-500 dark:text-gray-400 text-xs">predicted</p>
+                    <span className={`text-xs px-2 py-1 rounded-full ${
+                      item.priority === 'Very High' || item.priority === 'High'
+                        ? 'bg-red-100 dark:bg-red-900/20 text-red-700 dark:text-red-400'
+                        : 'bg-yellow-100 dark:bg-yellow-900/20 text-yellow-700 dark:text-yellow-400'
+                    }`}>
+                      {item.priority}
+                    </span>
                   </div>
                 </div>
               ))}
             </div>
+          </div>
+
+          <div className="mt-6">
+            <button
+              onClick={fetchData}
+              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center justify-center space-x-2"
+            >
+              <Icons.RefreshCw className="w-4 h-4" />
+              <span>Refresh Forecasts</span>
+            </button>
           </div>
         </motion.div>
       </div>
