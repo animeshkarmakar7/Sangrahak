@@ -3,7 +3,6 @@ import { motion } from 'framer-motion';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
 import * as Icons from 'lucide-react';
 import forecastAPI, { Forecast, ForecastAnalytics } from '../../services/forecastAPI';
-import { productsAPI } from '../../services/api';
 
 const ForecastChart: React.FC = () => {
   const [forecasts, setForecasts] = useState<Forecast[]>([]);
@@ -12,33 +11,64 @@ const ForecastChart: React.FC = () => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [timeFrame, setTimeFrame] = useState('30days');
+  const [predicting, setPredicting] = useState(false);
+  const [mlStatus, setMlStatus] = useState<any>(null);
 
   useEffect(() => {
     fetchData();
+    checkMLStatus();
   }, []);
+
+  const checkMLStatus = async () => {
+    try {
+      const status = await forecastAPI.getMLStatus();
+      setMlStatus(status);
+    } catch (err) {
+      console.error('ML API not available:', err);
+    }
+  };
 
   const fetchData = async () => {
     try {
       setLoading(true);
       setError(null);
 
-      // Fetch all forecasts
       const forecastsResponse = await forecastAPI.getAll({ limit: 50 });
       setForecasts(forecastsResponse.forecasts);
 
-      // Fetch analytics
       const analyticsData = await forecastAPI.getAnalytics();
       setAnalytics(analyticsData);
 
-      // Set first forecast as selected
       if (forecastsResponse.forecasts.length > 0) {
         setSelectedForecast(forecastsResponse.forecasts[0]);
       }
     } catch (err: any) {
       console.error('Error fetching forecast data:', err);
-      setError('Failed to load forecast data');
+      setError(err.message || 'Failed to load forecast data');
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleRunPrediction = async () => {
+    try {
+      setPredicting(true);
+      setError(null);
+      
+      const result = await forecastAPI.runPrediction();
+      
+      if (result.success) {
+        alert(`✅ Success! Generated ${result.count} forecasts`);
+        await fetchData();
+      } else {
+        throw new Error(result.error || 'Prediction failed');
+      }
+    } catch (err: any) {
+      console.error('Error running prediction:', err);
+      setError(err.message || 'Failed to run prediction');
+      alert('❌ Failed to run prediction. Make sure the ML API is running on port 5001.');
+    } finally {
+      setPredicting(false);
     }
   };
 
@@ -81,19 +111,28 @@ const ForecastChart: React.FC = () => {
     );
   }
 
-  if (error) {
+  if (error && !forecasts.length) {
     return (
       <div className="bg-white dark:bg-gray-900 rounded-2xl p-8 border border-gray-200 dark:border-gray-700">
         <div className="text-center">
           <Icons.AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Error Loading Forecasts</h3>
           <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
-          <button
-            onClick={fetchData}
-            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
-          >
-            Retry
-          </button>
+          <div className="flex items-center justify-center space-x-3">
+            <button
+              onClick={fetchData}
+              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+            >
+              Retry
+            </button>
+            <button
+              onClick={handleRunPrediction}
+              disabled={predicting}
+              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400"
+            >
+              {predicting ? 'Running...' : 'Run Prediction'}
+            </button>
+          </div>
         </div>
       </div>
     );
@@ -105,7 +144,33 @@ const ForecastChart: React.FC = () => {
         <div className="text-center">
           <Icons.TrendingUp className="w-12 h-12 text-gray-400 mx-auto mb-4" />
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">No Forecast Data Available</h3>
-          <p className="text-gray-600 dark:text-gray-400">Run the prediction model to generate forecasts.</p>
+          <p className="text-gray-600 dark:text-gray-400 mb-4">
+            Run the ML prediction model to generate forecasts.
+          </p>
+          {mlStatus && (
+            <div className="mb-4 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm">
+              <p className="text-blue-700 dark:text-blue-400">
+                ML Models: {mlStatus.ml_model_loaded ? '✅ Loaded' : '❌ Not Loaded'}
+              </p>
+            </div>
+          )}
+          <button
+            onClick={handleRunPrediction}
+            disabled={predicting}
+            className="px-6 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors disabled:bg-gray-400 flex items-center space-x-2 mx-auto"
+          >
+            {predicting ? (
+              <>
+                <Icons.Loader className="w-5 h-5 animate-spin" />
+                <span>Running Prediction...</span>
+              </>
+            ) : (
+              <>
+                <Icons.Zap className="w-5 h-5" />
+                <span>Run ML Prediction</span>
+              </>
+            )}
+          </button>
         </div>
       </div>
     );
@@ -119,6 +184,24 @@ const ForecastChart: React.FC = () => {
           <p className="text-gray-600 dark:text-gray-400">AI-powered demand predictions and trend analysis</p>
         </div>
         <div className="flex items-center space-x-3">
+          <button
+            onClick={handleRunPrediction}
+            disabled={predicting}
+            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:bg-gray-400 flex items-center space-x-2"
+            title="Run ML prediction to update forecasts"
+          >
+            {predicting ? (
+              <>
+                <Icons.Loader className="w-4 h-4 animate-spin" />
+                <span>Running...</span>
+              </>
+            ) : (
+              <>
+                <Icons.Zap className="w-4 h-4" />
+                <span>Update</span>
+              </>
+            )}
+          </button>
           <select
             value={selectedForecast?.sku || ''}
             onChange={(e) => handleForecastChange(e.target.value)}
@@ -296,6 +379,20 @@ const ForecastChart: React.FC = () => {
                 </div>
               </div>
             )}
+
+            {/* ML Status */}
+            {mlStatus && (
+              <div className="p-4 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-800 dark:to-slate-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                <div className="flex items-center space-x-2 mb-2">
+                  <Icons.Cpu className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                  <span className="font-medium text-gray-800 dark:text-gray-300">ML Status</span>
+                </div>
+                <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                  <p>Model: {mlStatus.ml_model_loaded ? '✅' : '❌'} {mlStatus.ml_model_type}</p>
+                  <p>ARIMA: {mlStatus.arima_models_loaded ? `✅ ${mlStatus.arima_models_count} models` : '❌'}</p>
+                </div>
+              </div>
+            )}
           </div>
 
           <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
@@ -305,7 +402,7 @@ const ForecastChart: React.FC = () => {
                 <div key={item.sku} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg">
                   <div>
                     <p className="font-medium text-gray-900 dark:text-white text-sm">{item.sku}</p>
-                    <p className="text-gray-500 dark:text-gray-400 text-xs">{item.name}</p>
+                    <p className="text-gray-500 dark:text-gray-400 text-xs">{item.name.substring(0, 20)}...</p>
                     <p className="text-gray-500 dark:text-gray-400 text-xs">Current: {item.currentStock}</p>
                   </div>
                   <div className="text-right">
