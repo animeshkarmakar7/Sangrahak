@@ -1,4 +1,4 @@
-// server.js - NO AUTHENTICATION VERSION
+// server.js - FIXED MongoDB Connection
 const express = require('express');
 const mongoose = require('mongoose');
 const cors = require('cors');
@@ -11,24 +11,51 @@ const PORT = process.env.PORT || 5000;
 app.use(cors());
 app.use(express.json());
 
-// MongoDB Connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb+srv://luckyak619_db_user:luckyak619@cluster0.lcmjwhw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0', {
+// MongoDB Connection - FIXED SSL/TLS Configuration
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb+srv://luckyak619_db_user:luckyak619@cluster0.lcmjwhw.mongodb.net/inventroops?retryWrites=true&w=majority';
+
+console.log('🔄 Attempting to connect to MongoDB...');
+
+// Try connection with proper error handling
+mongoose.connect(MONGODB_URI, {
   useNewUrlParser: true,
   useUnifiedTopology: true,
+})
+.then(() => {
+  console.log('✅ Connected to MongoDB Atlas successfully');
+})
+.catch((err) => {
+  console.error('❌ MongoDB connection error:', err.message);
+  console.log('\n💡 Troubleshooting steps:');
+  console.log('1. Check if your IP is whitelisted in MongoDB Atlas');
+  console.log('2. Verify your username and password');
+  console.log('3. Check your internet connection');
+  console.log('4. Try running: npm install mongodb@5.9.0');
 });
 
 // Connection event listeners
 mongoose.connection.on('connected', () => {
-  console.log('Connected to MongoDB');
+  console.log('📡 Mongoose connected to MongoDB');
 });
 
 mongoose.connection.on('error', (err) => {
-  console.error('MongoDB connection error:', err);
+  console.error('❌ Mongoose connection error:', err.message);
 });
 
-// Add these routes to your server.js file
+mongoose.connection.on('disconnected', () => {
+  console.log('📴 Mongoose disconnected from MongoDB');
+});
 
-// Forecast/Prediction Schema
+// Graceful shutdown
+process.on('SIGINT', async () => {
+  await mongoose.connection.close();
+  console.log('👋 MongoDB connection closed due to app termination');
+  process.exit(0);
+});
+
+// Schemas and Models
+
+// Forecast Schema
 const forecastSchema = new mongoose.Schema({
   itemId: { type: String, required: true },
   productName: { type: String, required: true },
@@ -43,179 +70,23 @@ const forecastSchema = new mongoose.Schema({
     actual: { type: Number },
     confidence: { type: Number }
   }],
+  inputParams: {
+    dailySales: Number,
+    weeklySales: Number,
+    reorderLevel: Number,
+    leadTime: Number,
+    brand: String,
+    category: String,
+    location: String,
+    supplierName: String
+  },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
 
 const Forecast = mongoose.model('Forecast', forecastSchema);
 
-// GET all forecasts with filtering
-app.get('/api/forecasts', async (req, res) => {
-  try {
-    const { sku, limit = 50, sortBy = 'updatedAt' } = req.query;
-    const query = {};
-
-    if (sku) {
-      query.sku = sku;
-    }
-
-    const forecasts = await Forecast.find(query)
-      .sort({ [sortBy]: -1 })
-      .limit(parseInt(limit));
-
-    res.json({
-      forecasts: forecasts.map(forecast => ({
-        id: forecast._id,
-        itemId: forecast.itemId,
-        productName: forecast.productName,
-        sku: forecast.sku,
-        currentStock: forecast.currentStock,
-        stockStatusPred: forecast.stockStatusPred,
-        priorityPred: forecast.priorityPred,
-        alert: forecast.alert,
-        forecastData: forecast.forecastData,
-        updatedAt: forecast.updatedAt
-      })),
-      total: forecasts.length
-    });
-  } catch (error) {
-    console.error('Error fetching forecasts:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// GET forecast by SKU or Item ID
-app.get('/api/forecasts/:identifier', async (req, res) => {
-  try {
-    const { identifier } = req.params;
-    
-    // Try to find by SKU first, then by itemId
-    let forecast = await Forecast.findOne({ sku: identifier });
-    if (!forecast) {
-      forecast = await Forecast.findOne({ itemId: identifier });
-    }
-    
-    if (!forecast) {
-      return res.status(404).json({ message: 'Forecast not found' });
-    }
-
-    res.json({
-      id: forecast._id,
-      itemId: forecast.itemId,
-      productName: forecast.productName,
-      sku: forecast.sku,
-      currentStock: forecast.currentStock,
-      stockStatusPred: forecast.stockStatusPred,
-      priorityPred: forecast.priorityPred,
-      alert: forecast.alert,
-      forecastData: forecast.forecastData,
-      updatedAt: forecast.updatedAt
-    });
-  } catch (error) {
-    console.error('Error fetching forecast:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// POST - Create or update forecast
-app.post('/api/forecasts', async (req, res) => {
-  try {
-    const { itemId, sku } = req.body;
-    
-    // Check if forecast already exists
-    let forecast = await Forecast.findOne({ $or: [{ itemId }, { sku }] });
-    
-    if (forecast) {
-      // Update existing forecast
-      Object.assign(forecast, req.body);
-      forecast.updatedAt = new Date();
-      await forecast.save();
-    } else {
-      // Create new forecast
-      forecast = new Forecast(req.body);
-      await forecast.save();
-    }
-
-    res.status(201).json({
-      message: 'Forecast saved successfully',
-      forecast: {
-        id: forecast._id,
-        itemId: forecast.itemId,
-        productName: forecast.productName,
-        sku: forecast.sku,
-        currentStock: forecast.currentStock,
-        stockStatusPred: forecast.stockStatusPred,
-        priorityPred: forecast.priorityPred,
-        alert: forecast.alert,
-        forecastData: forecast.forecastData
-      }
-    });
-  } catch (error) {
-    console.error('Error saving forecast:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// GET forecast insights/analytics
-app.get('/api/forecasts/analytics/insights', async (req, res) => {
-  try {
-    const forecasts = await Forecast.find();
-    
-    // Calculate insights
-    const highPriorityCount = forecasts.filter(f => 
-      f.priorityPred === 'High' || f.priorityPred === 'Very High'
-    ).length;
-    
-    const understockCount = forecasts.filter(f => 
-      f.stockStatusPred === 'Understock'
-    ).length;
-    
-    const avgStockLevel = forecasts.length > 0
-      ? forecasts.reduce((sum, f) => sum + f.currentStock, 0) / forecasts.length
-      : 0;
-
-    // Get top items needing restock
-    const topReorders = forecasts
-      .filter(f => f.priorityPred === 'High' || f.priorityPred === 'Very High')
-      .sort((a, b) => {
-        const priorityOrder = { 'Very High': 3, 'High': 2, 'Medium': 1, 'Low': 0 };
-        return (priorityOrder[b.priorityPred] || 0) - (priorityOrder[a.priorityPred] || 0);
-      })
-      .slice(0, 5)
-      .map(f => ({
-        sku: f.sku,
-        name: f.productName,
-        currentStock: f.currentStock,
-        priority: f.priorityPred,
-        predictedDemand: f.forecastData.length > 0 
-          ? Math.round(f.forecastData.reduce((sum, d) => sum + d.predicted, 0))
-          : 0
-      }));
-
-    res.json({
-      insights: {
-        highPriorityCount,
-        understockCount,
-        avgStockLevel: Math.round(avgStockLevel),
-        totalForecasts: forecasts.length
-      },
-      topReorders,
-      alerts: forecasts
-        .filter(f => f.alert !== 'Stock OK')
-        .map(f => ({
-          sku: f.sku,
-          productName: f.productName,
-          alert: f.alert,
-          priority: f.priorityPred
-        }))
-    });
-  } catch (error) {
-    console.error('Error fetching forecast insights:', error);
-    res.status(500).json({ message: 'Server error', error: error.message });
-  }
-});
-
-// User Schema (simplified - no auth fields needed)
+// User Schema
 const userSchema = new mongoose.Schema({
   name: { type: String, required: true },
   email: { type: String, required: true, unique: true },
@@ -260,7 +131,7 @@ const depotSchema = new mongoose.Schema({
   updatedAt: { type: Date, default: Date.now }
 });
 
-// Alert Schema - FIXED: Added 'out-of-stock' to enum
+// Alert Schema
 const alertSchema = new mongoose.Schema({
   type: { 
     type: String, 
@@ -286,7 +157,7 @@ const Product = mongoose.model('Product', productSchema);
 const Depot = mongoose.model('Depot', depotSchema);
 const Alert = mongoose.model('Alert', alertSchema);
 
-// Helper function to update product status based on stock
+// Helper Functions
 const updateProductStatus = (product) => {
   if (product.stock === 0) {
     product.status = 'out-of-stock';
@@ -300,10 +171,8 @@ const updateProductStatus = (product) => {
   return product;
 };
 
-// Helper function to create alerts for low/out of stock
 const createStockAlert = async (product) => {
   if (product.status === 'low-stock' || product.status === 'out-of-stock') {
-    // Check if alert already exists for this product
     const existingAlert = await Alert.findOne({
       productId: product._id,
       type: product.status === 'out-of-stock' ? 'out-of-stock' : 'low-stock',
@@ -323,7 +192,172 @@ const createStockAlert = async (product) => {
   }
 };
 
-// Product Routes - REMOVED authenticateToken middleware
+// FORECAST ROUTES
+
+// GET all forecasts
+app.get('/api/forecasts', async (req, res) => {
+  try {
+    const { sku, limit = 50, sortBy = 'updatedAt' } = req.query;
+    const query = {};
+
+    if (sku) {
+      query.sku = sku;
+    }
+
+    const forecasts = await Forecast.find(query)
+      .sort({ [sortBy]: -1 })
+      .limit(parseInt(limit));
+
+    res.json({
+      forecasts: forecasts.map(forecast => ({
+        id: forecast._id,
+        itemId: forecast.itemId,
+        productName: forecast.productName,
+        sku: forecast.sku,
+        currentStock: forecast.currentStock,
+        stockStatusPred: forecast.stockStatusPred,
+        priorityPred: forecast.priorityPred,
+        alert: forecast.alert,
+        forecastData: forecast.forecastData,
+        inputParams: forecast.inputParams,
+        updatedAt: forecast.updatedAt
+      })),
+      total: forecasts.length
+    });
+  } catch (error) {
+    console.error('Error fetching forecasts:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET forecast by SKU or Item ID
+app.get('/api/forecasts/:identifier', async (req, res) => {
+  try {
+    const { identifier } = req.params;
+    
+    let forecast = await Forecast.findOne({ sku: identifier });
+    if (!forecast) {
+      forecast = await Forecast.findOne({ itemId: identifier });
+    }
+    
+    if (!forecast) {
+      return res.status(404).json({ message: 'Forecast not found' });
+    }
+
+    res.json({
+      id: forecast._id,
+      itemId: forecast.itemId,
+      productName: forecast.productName,
+      sku: forecast.sku,
+      currentStock: forecast.currentStock,
+      stockStatusPred: forecast.stockStatusPred,
+      priorityPred: forecast.priorityPred,
+      alert: forecast.alert,
+      forecastData: forecast.forecastData,
+      inputParams: forecast.inputParams,
+      updatedAt: forecast.updatedAt
+    });
+  } catch (error) {
+    console.error('Error fetching forecast:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// POST - Create or update forecast
+app.post('/api/forecasts', async (req, res) => {
+  try {
+    const { itemId, sku } = req.body;
+    
+    let forecast = await Forecast.findOne({ $or: [{ itemId }, { sku }] });
+    
+    if (forecast) {
+      Object.assign(forecast, req.body);
+      forecast.updatedAt = new Date();
+      await forecast.save();
+    } else {
+      forecast = new Forecast(req.body);
+      await forecast.save();
+    }
+
+    res.status(201).json({
+      message: 'Forecast saved successfully',
+      forecast: {
+        id: forecast._id,
+        itemId: forecast.itemId,
+        productName: forecast.productName,
+        sku: forecast.sku,
+        currentStock: forecast.currentStock,
+        stockStatusPred: forecast.stockStatusPred,
+        priorityPred: forecast.priorityPred,
+        alert: forecast.alert,
+        forecastData: forecast.forecastData,
+        inputParams: forecast.inputParams
+      }
+    });
+  } catch (error) {
+    console.error('Error saving forecast:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// GET forecast analytics
+app.get('/api/forecasts/analytics/insights', async (req, res) => {
+  try {
+    const forecasts = await Forecast.find();
+    
+    const highPriorityCount = forecasts.filter(f => 
+      f.priorityPred === 'High' || f.priorityPred === 'Very High'
+    ).length;
+    
+    const understockCount = forecasts.filter(f => 
+      f.stockStatusPred === 'Understock'
+    ).length;
+    
+    const avgStockLevel = forecasts.length > 0
+      ? forecasts.reduce((sum, f) => sum + f.currentStock, 0) / forecasts.length
+      : 0;
+
+    const topReorders = forecasts
+      .filter(f => f.priorityPred === 'High' || f.priorityPred === 'Very High')
+      .sort((a, b) => {
+        const priorityOrder = { 'Very High': 3, 'High': 2, 'Medium': 1, 'Low': 0 };
+        return (priorityOrder[b.priorityPred] || 0) - (priorityOrder[a.priorityPred] || 0);
+      })
+      .slice(0, 5)
+      .map(f => ({
+        sku: f.sku,
+        name: f.productName,
+        currentStock: f.currentStock,
+        priority: f.priorityPred,
+        predictedDemand: f.forecastData.length > 0 
+          ? Math.round(f.forecastData.reduce((sum, d) => sum + d.predicted, 0))
+          : 0
+      }));
+
+    res.json({
+      insights: {
+        highPriorityCount,
+        understockCount,
+        avgStockLevel: Math.round(avgStockLevel),
+        totalForecasts: forecasts.length
+      },
+      topReorders,
+      alerts: forecasts
+        .filter(f => f.alert !== 'Stock OK')
+        .map(f => ({
+          sku: f.sku,
+          productName: f.productName,
+          alert: f.alert,
+          priority: f.priorityPred
+        }))
+    });
+  } catch (error) {
+    console.error('Error fetching forecast insights:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// PRODUCT ROUTES
 app.get('/api/products', async (req, res) => {
   try {
     const { search, category, status, page = 1, limit = 50 } = req.query;
@@ -378,13 +412,8 @@ app.post('/api/products', async (req, res) => {
   try {
     const productData = req.body;
     let product = new Product(productData);
-    
-    // Update status based on stock
     product = updateProductStatus(product);
-    
     await product.save();
-
-    // Create alert if needed
     await createStockAlert(product);
 
     res.status(201).json({
@@ -421,13 +450,8 @@ app.put('/api/products/:id', async (req, res) => {
 
     Object.assign(product, req.body);
     product.updatedAt = new Date();
-    
-    // Update status based on stock
     updateProductStatus(product);
-    
     await product.save();
-
-    // Create alert if needed
     await createStockAlert(product);
 
     res.json({
@@ -457,10 +481,7 @@ app.delete('/api/products/:id', async (req, res) => {
     if (!product) {
       return res.status(404).json({ message: 'Product not found' });
     }
-
-    // Also delete related alerts
     await Alert.deleteMany({ productId: req.params.id });
-
     res.json({ message: 'Product deleted successfully' });
   } catch (error) {
     console.error('Error deleting product:', error);
@@ -468,7 +489,6 @@ app.delete('/api/products/:id', async (req, res) => {
   }
 });
 
-// Get categories for filter
 app.get('/api/products/categories', async (req, res) => {
   try {
     const categories = await Product.distinct('category');
@@ -479,11 +499,10 @@ app.get('/api/products/categories', async (req, res) => {
   }
 });
 
-// Depot Routes
+// DEPOT ROUTES
 app.get('/api/depots', async (req, res) => {
   try {
     const depots = await Depot.find().sort({ updatedAt: -1 });
-    
     res.json({
       depots: depots.map(depot => ({
         id: depot._id,
@@ -504,8 +523,6 @@ app.get('/api/depots', async (req, res) => {
 app.post('/api/depots', async (req, res) => {
   try {
     const depot = new Depot(req.body);
-    
-    // Update status based on utilization
     const utilizationPercentage = (depot.currentUtilization / depot.capacity) * 100;
     if (utilizationPercentage >= 95) {
       depot.status = 'critical';
@@ -514,7 +531,6 @@ app.post('/api/depots', async (req, res) => {
     } else {
       depot.status = 'normal';
     }
-    
     await depot.save();
 
     res.status(201).json({
@@ -535,7 +551,7 @@ app.post('/api/depots', async (req, res) => {
   }
 });
 
-// Alert Routes
+// ALERT ROUTES
 app.get('/api/alerts', async (req, res) => {
   try {
     const { unreadOnly = false, page = 1, limit = 20 } = req.query;
@@ -596,7 +612,7 @@ app.put('/api/alerts/:id/read', async (req, res) => {
   }
 });
 
-// Dashboard Stats
+// DASHBOARD ROUTES
 app.get('/api/dashboard/stats', async (req, res) => {
   try {
     const totalProducts = await Product.countDocuments();
@@ -605,11 +621,9 @@ app.get('/api/dashboard/stats', async (req, res) => {
     const totalDepots = await Depot.countDocuments();
     const unreadAlerts = await Alert.countDocuments({ isRead: false });
     
-    // Calculate total inventory value
     const products = await Product.find();
     const totalValue = products.reduce((sum, product) => sum + (product.price * product.stock), 0);
     
-    // Calculate average depot utilization
     const depots = await Depot.find();
     const avgUtilization = depots.length > 0 
       ? depots.reduce((sum, depot) => sum + ((depot.currentUtilization / depot.capacity) * 100), 0) / depots.length 
@@ -664,7 +678,6 @@ app.get('/api/dashboard/stats', async (req, res) => {
   }
 });
 
-// Get top SKUs by stock level (for charts)
 app.get('/api/dashboard/top-skus', async (req, res) => {
   try {
     const products = await Product.find()
@@ -674,7 +687,7 @@ app.get('/api/dashboard/top-skus', async (req, res) => {
     const topSKUs = products.map(product => ({
       sku: product.sku,
       name: product.name,
-      predictedDemand: Math.floor(product.stock * 0.3 + Math.random() * 50), // Mock prediction
+      predictedDemand: Math.floor(product.stock * 0.3 + Math.random() * 50),
       currentStock: product.stock,
       category: product.category
     }));
@@ -686,7 +699,7 @@ app.get('/api/dashboard/top-skus', async (req, res) => {
   }
 });
 
-// Health check endpoint
+// Health check
 app.get('/api/health', (req, res) => {
   res.json({ 
     status: 'OK', 
@@ -697,6 +710,7 @@ app.get('/api/health', (req, res) => {
 
 // Start server
 app.listen(PORT, () => {
-  console.log(`Server running on port ${PORT}`);
-  console.log(`Health check: http://localhost:${PORT}/api/health`);
+  console.log(`\n🚀 Server running on port ${PORT}`);
+  console.log(`📍 Health check: http://localhost:${PORT}/api/health`);
+  console.log(`📡 API Base URL: http://localhost:${PORT}/api`);
 });

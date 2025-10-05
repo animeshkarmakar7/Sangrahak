@@ -1,125 +1,188 @@
 import React, { useState, useEffect } from 'react';
-import { motion } from 'framer-motion';
-import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart } from 'recharts';
-import * as Icons from 'lucide-react';
-import forecastAPI, { Forecast, ForecastAnalytics } from '../../services/forecastAPI';
+import { motion, AnimatePresence } from 'framer-motion';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Area, AreaChart, Legend } from 'recharts';
+import { TrendingUp, Loader, AlertCircle, RefreshCw, Zap, Package, Brain, CheckCircle, AlertTriangle, BarChart3, X, ChevronDown } from 'lucide-react';
+
+interface ForecastDataPoint {
+  date: string;
+  predicted: number;
+  actual?: number | null;
+  confidence?: number;
+}
+
+interface InputParams {
+  dailySales: number;
+  weeklySales: number;
+  reorderLevel: number;
+  leadTime: number;
+  brand?: string;
+  category?: string;
+  location?: string;
+  supplierName?: string;
+}
+
+interface Forecast {
+  itemId: string;
+  productName: string;
+  sku: string;
+  currentStock: number;
+  stockStatusPred: string;
+  priorityPred: string;
+  alert: string;
+  forecastData: ForecastDataPoint[];
+  inputParams?: InputParams;
+  updatedAt?: string;
+}
+
+interface Product {
+  sku: string;
+  name: string;
+  category?: string;
+  stock?: number;
+  supplier?: string;
+}
+
+interface FormData {
+  currentStock: string;
+  dailySales: string;
+  weeklySales: string;
+  reorderLevel: string;
+  leadTime: string;
+  brand: string;
+  category: string;
+  location: string;
+  supplierName: string;
+  forecastDays: number;
+}
 
 const ForecastChart: React.FC = () => {
-  const [forecasts, setForecasts] = useState<Forecast[]>([]);
-  const [selectedForecast, setSelectedForecast] = useState<Forecast | null>(null);
-  const [analytics, setAnalytics] = useState<ForecastAnalytics | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [timeFrame, setTimeFrame] = useState('30days');
+  const [products, setProducts] = useState<Product[]>([]);
+  const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
+  const [forecast, setForecast] = useState<Forecast | null>(null);
+  const [loading, setLoading] = useState(false);
   const [predicting, setPredicting] = useState(false);
-  const [mlStatus, setMlStatus] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showInputForm, setShowInputForm] = useState(false);
+  
+  const [formData, setFormData] = useState<FormData>({
+    currentStock: '',
+    dailySales: '',
+    weeklySales: '',
+    reorderLevel: '',
+    leadTime: '',
+    brand: '',
+    category: '',
+    location: '',
+    supplierName: '',
+    forecastDays: 30
+  });
 
   useEffect(() => {
-    fetchData();
-    checkMLStatus();
+    loadProducts();
   }, []);
 
-  const checkMLStatus = async () => {
-    try {
-      const status = await forecastAPI.getMLStatus();
-      setMlStatus(status);
-      console.log('✅ ML Status:', status);
-    } catch (err) {
-      console.error('⚠️ ML API not available:', err);
-    }
-  };
-
-  const fetchData = async () => {
+  const loadProducts = async () => {
     try {
       setLoading(true);
-      setError(null);
-
-      console.log('📊 Fetching forecasts from Express API...');
-      const forecastsResponse = await forecastAPI.getAll({ limit: 100 });
+      const response = await fetch('http://localhost:5001/api/ml/products');
+      const data = await response.json();
       
-      console.log('✅ Forecasts received:', forecastsResponse.forecasts.length);
-      setForecasts(forecastsResponse.forecasts);
-
-      if (forecastsResponse.forecasts.length > 0) {
-        // Select the first forecast with data
-        const firstValidForecast = forecastsResponse.forecasts.find(f => f.forecastData && f.forecastData.length > 0);
-        if (firstValidForecast) {
-          setSelectedForecast(firstValidForecast);
-          console.log('📈 Selected forecast:', firstValidForecast.sku);
-        }
+      if (data.success) {
+        setProducts(data.products);
+        console.log('✅ Loaded products:', data.products.length);
       }
-
-      console.log('📊 Fetching analytics...');
-      const analyticsData = await forecastAPI.getAnalytics();
-      setAnalytics(analyticsData);
-      console.log('✅ Analytics loaded');
-      
-    } catch (err: any) {
-      console.error('❌ Error fetching forecast data:', err);
-      setError(err.message || 'Failed to load forecast data');
+    } catch (err) {
+      console.error('❌ Error loading products:', err);
+      setError('Failed to load products. Make sure ML API is running on port 5001.');
     } finally {
       setLoading(false);
     }
   };
 
+  const handleProductSelect = (product: Product) => {
+    setSelectedProduct(product);
+    setFormData({
+      currentStock: product.stock?.toString() || '',
+      dailySales: '',
+      weeklySales: '',
+      reorderLevel: '',
+      leadTime: '',
+      brand: '',
+      category: product.category || '',
+      location: '',
+      supplierName: product.supplier || '',
+      forecastDays: 30
+    });
+    setShowInputForm(true);
+    setForecast(null);
+  };
+
+  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) => {
+    const { name, value } = e.target;
+    setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
   const handleRunPrediction = async () => {
+    if (!selectedProduct) {
+      alert('Please select a product first');
+      return;
+    }
+
+    const requiredFields: (keyof FormData)[] = ['currentStock', 'dailySales', 'weeklySales', 'reorderLevel', 'leadTime'];
+    const missingFields = requiredFields.filter(field => !formData[field]);
+    
+    if (missingFields.length > 0) {
+      alert(`Please fill in all required fields: ${missingFields.join(', ')}`);
+      return;
+    }
+
     try {
       setPredicting(true);
       setError(null);
-      
-      console.log('🤖 Running ML prediction...');
-      const result = await forecastAPI.runPrediction();
-      
-      if (result.success) {
-        console.log(`✅ Success! Generated ${result.count} forecasts`);
-        
-        // Show success message
-        const message = `✅ Success! Generated ${result.count} forecasts`;
-        alert(message);
-        
-        // Wait a bit for MongoDB to be updated
-        console.log('⏳ Waiting for data to be saved...');
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        // Refresh data
-        console.log('🔄 Refreshing forecast data...');
-        await fetchData();
+
+      const payload = {
+        sku: selectedProduct.sku,
+        productName: selectedProduct.name,
+        currentStock: parseFloat(formData.currentStock),
+        dailySales: parseFloat(formData.dailySales),
+        weeklySales: parseFloat(formData.weeklySales),
+        reorderLevel: parseFloat(formData.reorderLevel),
+        leadTime: parseFloat(formData.leadTime),
+        brand: formData.brand || 'Unknown',
+        category: formData.category || 'Unknown',
+        location: formData.location || 'Unknown',
+        supplierName: formData.supplierName || 'Unknown',
+        forecastDays: formData.forecastDays
+      };
+
+      console.log('🤖 Running prediction with:', payload);
+
+      const response = await fetch('http://localhost:5001/api/ml/predict/custom', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        setForecast(data.forecast);
+        setShowInputForm(false);
+        console.log('✅ Forecast generated:', data.forecast);
       } else {
-        throw new Error(result.error || 'Prediction failed');
+        throw new Error(data.error || 'Prediction failed');
       }
     } catch (err: any) {
       console.error('❌ Error running prediction:', err);
-      setError(err.message || 'Failed to run prediction');
-      alert(`❌ Failed to run prediction: ${err.message}\n\nMake sure:\n1. ML API is running on port 5001\n2. Flask server (app.py) is started\n3. Models are loaded correctly`);
+      setError(err.message);
+      alert(`Failed to generate forecast: ${err.message}`);
     } finally {
       setPredicting(false);
     }
   };
 
-  const handleForecastChange = async (sku: string) => {
-    try {
-      console.log(`🔍 Fetching forecast for SKU: ${sku}`);
-      const forecast = await forecastAPI.getById(sku);
-      setSelectedForecast(forecast);
-      console.log('✅ Forecast loaded:', forecast);
-    } catch (err) {
-      console.error('❌ Error fetching forecast:', err);
-      setError('Failed to load selected forecast');
-    }
-  };
-
-  const getFilteredData = () => {
-    if (!selectedForecast || !selectedForecast.forecastData) return [];
-
-    const days = timeFrame === '7days' ? 7 : timeFrame === '30days' ? 30 : 90;
-    const data = selectedForecast.forecastData.slice(0, days);
-    
-    console.log(`📊 Displaying ${data.length} days of forecast data`);
-    return data;
-  };
-
   const getSeverityColor = (priority: string) => {
-    switch (priority.toLowerCase()) {
+    switch (priority?.toLowerCase()) {
       case 'very high':
       case 'high':
         return 'from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 border-red-200 dark:border-red-800 text-red-700 dark:text-red-400';
@@ -134,102 +197,12 @@ const ForecastChart: React.FC = () => {
     return (
       <div className="flex items-center justify-center h-96">
         <div className="text-center">
-          <Icons.Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
-          <p className="text-gray-600 dark:text-gray-400">Loading forecast data...</p>
+          <Loader className="w-8 h-8 animate-spin text-blue-600 mx-auto mb-4" />
+          <p className="text-gray-600 dark:text-gray-400">Loading products...</p>
         </div>
       </div>
     );
   }
-
-  if (error && !forecasts.length) {
-    return (
-      <div className="bg-white dark:bg-gray-900 rounded-2xl p-8 border border-gray-200 dark:border-gray-700">
-        <div className="text-center">
-          <Icons.AlertCircle className="w-12 h-12 text-red-500 mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Error Loading Forecasts</h3>
-          <p className="text-gray-600 dark:text-gray-400 mb-4">{error}</p>
-          <div className="flex items-center justify-center space-x-3">
-            <button
-              onClick={fetchData}
-              className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center space-x-2"
-            >
-              <Icons.RefreshCw className="w-4 h-4" />
-              <span>Retry</span>
-            </button>
-            <button
-              onClick={handleRunPrediction}
-              disabled={predicting}
-              className="px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors disabled:bg-gray-400 flex items-center space-x-2"
-            >
-              {predicting ? (
-                <>
-                  <Icons.Loader className="w-4 h-4 animate-spin" />
-                  <span>Running...</span>
-                </>
-              ) : (
-                <>
-                  <Icons.Zap className="w-4 h-4" />
-                  <span>Run Prediction</span>
-                </>
-              )}
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (!forecasts.length) {
-    return (
-      <div className="bg-white dark:bg-gray-900 rounded-2xl p-8 border border-gray-200 dark:border-gray-700">
-        <div className="text-center">
-          <Icons.TrendingUp className="w-16 h-16 text-gray-400 mx-auto mb-4" />
-          <h3 className="text-xl font-semibold text-gray-900 dark:text-white mb-2">No Forecast Data Available</h3>
-          <p className="text-gray-600 dark:text-gray-400 mb-6">
-            Run the ML prediction model to generate forecasts for your inventory.
-          </p>
-          
-          {mlStatus && (
-            <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/20 rounded-lg text-sm max-w-md mx-auto">
-              <div className="flex items-center justify-center space-x-2 mb-2">
-                <Icons.Cpu className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                <span className="font-semibold text-blue-800 dark:text-blue-300">ML Status</span>
-              </div>
-              <div className="space-y-1 text-left text-blue-700 dark:text-blue-400">
-                <p>ML Model: {mlStatus.ml_model_loaded ? '✅ Loaded' : '❌ Not Loaded'}</p>
-                <p>Type: {mlStatus.ml_model_type}</p>
-                <p>ARIMA Models: {mlStatus.arima_models_loaded ? `✅ ${mlStatus.arima_models_count} loaded` : '❌ Not Loaded'}</p>
-              </div>
-            </div>
-          )}
-          
-          <button
-            onClick={handleRunPrediction}
-            disabled={predicting}
-            className="px-8 py-4 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-xl transition-all shadow-lg disabled:from-gray-400 disabled:to-gray-500 flex items-center space-x-3 mx-auto text-lg font-semibold"
-          >
-            {predicting ? (
-              <>
-                <Icons.Loader className="w-6 h-6 animate-spin" />
-                <span>Running Prediction...</span>
-              </>
-            ) : (
-              <>
-                <Icons.Zap className="w-6 h-6" />
-                <span>Run ML Prediction</span>
-              </>
-            )}
-          </button>
-          
-          <p className="mt-4 text-xs text-gray-500 dark:text-gray-400">
-            Make sure Flask ML API is running on port 5001
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  const chartData = getFilteredData();
 
   return (
     <div className="space-y-6">
@@ -238,93 +211,300 @@ const ForecastChart: React.FC = () => {
           <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Demand Forecasting</h2>
           <p className="text-gray-600 dark:text-gray-400">AI-powered demand predictions and trend analysis</p>
         </div>
-        <div className="flex items-center space-x-3">
-          <button
-            onClick={handleRunPrediction}
-            disabled={predicting}
-            className="px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:bg-gray-400 flex items-center space-x-2"
-            title="Run ML prediction to update all forecasts"
-          >
-            {predicting ? (
-              <>
-                <Icons.Loader className="w-4 h-4 animate-spin" />
-                <span>Running...</span>
-              </>
-            ) : (
-              <>
-                <Icons.Zap className="w-4 h-4" />
-                <span>Update All</span>
-              </>
-            )}
-          </button>
-          <select
-            value={selectedForecast?.sku || ''}
-            onChange={(e) => handleForecastChange(e.target.value)}
-            className="px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
-          >
-            {forecasts.map(forecast => (
-              <option key={forecast.sku} value={forecast.sku}>
-                {forecast.productName} ({forecast.sku})
-              </option>
-            ))}
-          </select>
-          <select
-            value={timeFrame}
-            onChange={(e) => setTimeFrame(e.target.value)}
-            className="px-4 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
-          >
-            <option value="7days">7 Days</option>
-            <option value="30days">30 Days</option>
-            <option value="90days">90 Days</option>
-          </select>
-          <button
-            onClick={fetchData}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center space-x-2"
-            title="Refresh forecast data"
-          >
-            <Icons.RefreshCw className="w-4 h-4" />
-          </button>
-        </div>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        {/* Main Forecast Chart */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className="xl:col-span-2 bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-sm border border-gray-200 dark:border-gray-700"
-        >
-          <div className="flex items-center justify-between mb-6">
-            <div>
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Demand Forecast Trends</h3>
-              <p className="text-gray-500 dark:text-gray-400 text-sm">
-                {selectedForecast ? `${selectedForecast.productName} (${selectedForecast.sku})` : 'Select a product'}
-              </p>
-            </div>
-            <div className="flex items-center space-x-4">
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                <span className="text-sm text-gray-600 dark:text-gray-400">Actual</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
-                <span className="text-sm text-gray-600 dark:text-gray-400">Predicted</span>
-              </div>
-              <div className="flex items-center space-x-2">
-                <div className="w-3 h-3 bg-purple-300 rounded-full opacity-50"></div>
-                <span className="text-sm text-gray-600 dark:text-gray-400">Confidence</span>
-              </div>
-            </div>
-          </div>
+      {/* Product Selection */}
+      <div className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-sm border border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center space-x-2">
+            <Package className="w-5 h-5 text-blue-600" />
+            <span>Select Product</span>
+          </h3>
+          <button
+            onClick={loadProducts}
+            className="px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 dark:bg-gray-800 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg transition-colors flex items-center space-x-2"
+          >
+            <RefreshCw className="w-4 h-4" />
+            <span>Refresh</span>
+          </button>
+        </div>
 
-          {selectedForecast && chartData.length > 0 ? (
+        {products.length > 0 ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {products.map((product) => (
+              <button
+                key={product.sku}
+                onClick={() => handleProductSelect(product)}
+                className={`p-4 text-left rounded-lg border-2 transition-all ${
+                  selectedProduct?.sku === product.sku
+                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
+                    : 'border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-700 bg-white dark:bg-gray-800'
+                }`}
+              >
+                <p className="font-semibold text-gray-900 dark:text-white">{product.name}</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">SKU: {product.sku}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Stock: {product.stock || 'N/A'}</p>
+                {product.category && (
+                  <span className="inline-block mt-2 px-2 py-1 text-xs bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded">
+                    {product.category}
+                  </span>
+                )}
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div className="text-center py-8">
+            <Package className="w-12 h-12 text-gray-400 mx-auto mb-3" />
+            <p className="text-gray-600 dark:text-gray-400">No products available</p>
+            <p className="text-sm text-gray-500 dark:text-gray-500 mt-2">
+              Make sure products exist in MongoDB database
+            </p>
+          </div>
+        )}
+      </div>
+
+      {/* Input Form */}
+      <AnimatePresence>
+        {showInputForm && selectedProduct && (
+          <motion.div
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -20 }}
+            className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-sm border border-gray-200 dark:border-gray-700"
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">
+                Configure Forecast Parameters - {selectedProduct.name}
+              </h3>
+              <button
+                onClick={() => setShowInputForm(false)}
+                className="p-2 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Current Stock <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  name="currentStock"
+                  value={formData.currentStock}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                  required
+                  min="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Daily Sales <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  name="dailySales"
+                  value={formData.dailySales}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                  required
+                  min="0"
+                  step="0.1"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Weekly Sales <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  name="weeklySales"
+                  value={formData.weeklySales}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                  required
+                  min="0"
+                  step="0.1"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Reorder Level <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  name="reorderLevel"
+                  value={formData.reorderLevel}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                  required
+                  min="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Lead Time (days) <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="number"
+                  name="leadTime"
+                  value={formData.leadTime}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                  required
+                  min="0"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Brand
+                </label>
+                <input
+                  type="text"
+                  name="brand"
+                  value={formData.brand}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                  placeholder="Optional"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Category
+                </label>
+                <input
+                  type="text"
+                  name="category"
+                  value={formData.category}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                  placeholder="Optional"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Location
+                </label>
+                <input
+                  type="text"
+                  name="location"
+                  value={formData.location}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                  placeholder="Optional"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Supplier Name
+                </label>
+                <input
+                  type="text"
+                  name="supplierName"
+                  value={formData.supplierName}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                  placeholder="Optional"
+                />
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Forecast Period (days)
+                </label>
+                <select
+                  name="forecastDays"
+                  value={formData.forecastDays}
+                  onChange={handleInputChange}
+                  className="w-full px-3 py-2 bg-gray-50 dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent text-gray-900 dark:text-white"
+                >
+                  <option value={7}>7 Days</option>
+                  <option value={14}>14 Days</option>
+                  <option value={30}>30 Days</option>
+                  <option value={60}>60 Days</option>
+                  <option value={90}>90 Days</option>
+                </select>
+              </div>
+            </div>
+
+            <div className="mt-6 flex justify-end space-x-3">
+              <button
+                onClick={() => setShowInputForm(false)}
+                className="px-6 py-2 bg-gray-200 hover:bg-gray-300 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-800 dark:text-gray-200 rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleRunPrediction}
+                disabled={predicting}
+                className="px-6 py-2 bg-gradient-to-r from-blue-600 to-indigo-600 hover:from-blue-700 hover:to-indigo-700 text-white rounded-lg transition-all shadow-lg disabled:from-gray-400 disabled:to-gray-500 flex items-center space-x-2"
+              >
+                {predicting ? (
+                  <>
+                    <Loader className="w-5 h-5 animate-spin" />
+                    <span>Generating...</span>
+                  </>
+                ) : (
+                  <>
+                    <Zap className="w-5 h-5" />
+                    <span>Generate Forecast</span>
+                  </>
+                )}
+              </button>
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* Forecast Results */}
+      {forecast && (
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-6">
+          {/* Main Chart */}
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="xl:col-span-2 bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-sm border border-gray-200 dark:border-gray-700"
+          >
+            <div className="flex items-center justify-between mb-6">
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Demand Forecast</h3>
+                <p className="text-gray-500 dark:text-gray-400 text-sm">
+                  {forecast.productName} ({forecast.sku})
+                </p>
+              </div>
+              <div className="flex items-center space-x-4">
+                <div className="flex items-center space-x-2">
+                  <div className="w-3 h-3 bg-emerald-500 rounded-full"></div>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">Predicted</span>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <div className="w-3 h-3 bg-purple-300 rounded-full opacity-50"></div>
+                  <span className="text-sm text-gray-600 dark:text-gray-400">Confidence</span>
+                </div>
+              </div>
+            </div>
+
             <div className="h-80">
               <ResponsiveContainer width="100%" height="100%">
-                <AreaChart data={chartData}>
+                <AreaChart data={forecast.forecastData}>
                   <defs>
+                    <linearGradient id="colorPredicted" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#10b981" stopOpacity={0.05}/>
+                    </linearGradient>
                     <linearGradient id="colorConfidence" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="5%" stopColor="#a855f7" stopOpacity={0.3}/>
-                      <stop offset="95%" stopColor="#a855f7" stopOpacity={0.05}/>
+                      <stop offset="5%" stopColor="#a855f7" stopOpacity={0.2}/>
+                      <stop offset="95%" stopColor="#a855f7" stopOpacity={0.02}/>
                     </linearGradient>
                   </defs>
                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" className="dark:stroke-gray-700" />
@@ -332,8 +512,6 @@ const ForecastChart: React.FC = () => {
                     dataKey="date" 
                     stroke="#9ca3af"
                     fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
                     tickFormatter={(value) => {
                       const date = new Date(value);
                       return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
@@ -342,8 +520,6 @@ const ForecastChart: React.FC = () => {
                   <YAxis 
                     stroke="#9ca3af"
                     fontSize={12}
-                    tickLine={false}
-                    axisLine={false}
                     label={{ value: 'Units', angle: -90, position: 'insideLeft', style: { fill: '#9ca3af' } }}
                   />
                   <Tooltip
@@ -358,16 +534,9 @@ const ForecastChart: React.FC = () => {
                       const date = new Date(value);
                       return date.toLocaleDateString('en-US', { 
                         weekday: 'short', 
-                        year: 'numeric', 
                         month: 'short', 
                         day: 'numeric' 
                       });
-                    }}
-                    formatter={(value: any, name: string) => {
-                      if (name === 'confidence') {
-                        return [`${(value * 100).toFixed(0)}%`, 'Confidence'];
-                      }
-                      return [value ? value.toFixed(2) : 'N/A', name === 'predicted' ? 'Predicted' : 'Actual'];
                     }}
                   />
                   <Area
@@ -377,220 +546,137 @@ const ForecastChart: React.FC = () => {
                     fill="url(#colorConfidence)"
                     fillOpacity={1}
                   />
-                  <Line
-                    type="monotone"
-                    dataKey="actual"
-                    stroke="#3b82f6"
-                    strokeWidth={3}
-                    dot={{ fill: '#3b82f6', strokeWidth: 2, r: 4 }}
-                    connectNulls={false}
-                    activeDot={{ r: 6 }}
-                  />
-                  <Line
+                  <Area
                     type="monotone"
                     dataKey="predicted"
                     stroke="#10b981"
                     strokeWidth={3}
-                    strokeDasharray="5 5"
-                    dot={{ fill: '#10b981', strokeWidth: 2, r: 4 }}
-                    activeDot={{ r: 6 }}
+                    fill="url(#colorPredicted)"
+                    fillOpacity={1}
                   />
                 </AreaChart>
               </ResponsiveContainer>
             </div>
-          ) : (
-            <div className="h-80 flex items-center justify-center bg-gray-50 dark:bg-gray-800 rounded-lg">
-              <div className="text-center">
-                <Icons.TrendingUp className="w-12 h-12 text-gray-400 mx-auto mb-3" />
-                <p className="text-gray-600 dark:text-gray-400">No forecast data available for this product</p>
-              </div>
+          </motion.div>
+
+          {/* Insights Panel */}
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            animate={{ opacity: 1, x: 0 }}
+            transition={{ delay: 0.2 }}
+            className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 overflow-y-auto max-h-[600px]"
+          >
+            <div className="flex items-center space-x-2 mb-6">
+              <Brain className="w-6 h-6 text-purple-600 dark:text-purple-400" />
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">AI Insights</h3>
             </div>
-          )}
-        </motion.div>
 
-        {/* Insights Panel */}
-        <motion.div
-          initial={{ opacity: 0, x: 20 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ delay: 0.2 }}
-          className="bg-white dark:bg-gray-900 rounded-2xl p-6 shadow-sm border border-gray-200 dark:border-gray-700 overflow-y-auto max-h-[600px]"
-        >
-          <div className="flex items-center space-x-2 mb-6">
-            <Icons.Brain className="w-6 h-6 text-purple-600 dark:text-purple-400" />
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">AI Insights</h3>
-          </div>
-
-          <div className="space-y-4">
-            {/* Current Product Status */}
-            {selectedForecast && (
-              <div className={`p-4 bg-gradient-to-r rounded-lg border ${getSeverityColor(selectedForecast.priorityPred)}`}>
+            <div className="space-y-4">
+              {/* Stock Status */}
+              <div className={`p-4 bg-gradient-to-r rounded-lg border ${getSeverityColor(forecast.priorityPred)}`}>
                 <div className="flex items-center space-x-2 mb-2">
-                  {selectedForecast.priorityPred === 'High' || selectedForecast.priorityPred === 'Very High' ? (
-                    <Icons.AlertTriangle className="w-5 h-5" />
+                  {forecast.priorityPred === 'High' || forecast.priorityPred === 'Very High' ? (
+                    <AlertTriangle className="w-5 h-5" />
                   ) : (
-                    <Icons.CheckCircle className="w-5 h-5" />
+                    <CheckCircle className="w-5 h-5" />
                   )}
-                  <span className="font-medium">{selectedForecast.stockStatusPred}</span>
+                  <span className="font-medium">{forecast.stockStatusPred}</span>
                 </div>
                 <p className="text-sm">
-                  Priority: <strong>{selectedForecast.priorityPred}</strong>
+                  Priority: <strong>{forecast.priorityPred}</strong>
                 </p>
                 <p className="text-sm mt-1">
-                  Current Stock: <strong>{selectedForecast.currentStock}</strong>
+                  Current Stock: <strong>{forecast.currentStock}</strong>
                 </p>
               </div>
-            )}
 
-            {/* Alert Message */}
-            {selectedForecast && selectedForecast.alert !== 'Stock OK' && (
-              <div className="p-4 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 rounded-lg border border-red-200 dark:border-red-800">
-                <div className="flex items-center space-x-2 mb-2">
-                  <Icons.AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
-                  <span className="font-medium text-red-800 dark:text-red-300">Action Required</span>
+              {/* Alert */}
+              {forecast.alert !== 'Stock OK' && (
+                <div className="p-4 bg-gradient-to-r from-red-50 to-orange-50 dark:from-red-900/20 dark:to-orange-900/20 rounded-lg border border-red-200 dark:border-red-800">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+                    <span className="font-medium text-red-800 dark:text-red-300">Action Required</span>
+                  </div>
+                  <p className="text-red-700 dark:text-red-400 text-sm">
+                    {forecast.alert}
+                  </p>
                 </div>
-                <p className="text-red-700 dark:text-red-400 text-sm">
-                  {selectedForecast.alert}
-                </p>
-              </div>
-            )}
+              )}
 
-            {/* Forecast Summary */}
-            {selectedForecast && chartData.length > 0 && (
+              {/* Forecast Summary */}
               <div className="p-4 bg-gradient-to-r from-indigo-50 to-purple-50 dark:from-indigo-900/20 dark:to-purple-900/20 rounded-lg border border-indigo-200 dark:border-indigo-800">
                 <div className="flex items-center space-x-2 mb-3">
-                  <Icons.TrendingUp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
+                  <TrendingUp className="w-5 h-5 text-indigo-600 dark:text-indigo-400" />
                   <span className="font-medium text-indigo-800 dark:text-indigo-300">Forecast Summary</span>
                 </div>
                 <div className="space-y-2 text-sm text-indigo-700 dark:text-indigo-400">
                   <div className="flex justify-between">
                     <span>Total Predicted Demand:</span>
-                    <strong>{chartData.reduce((sum, d) => sum + (d.predicted || 0), 0).toFixed(0)} units</strong>
+                    <strong>
+                      {forecast.forecastData.reduce((sum, d) => sum + (d.predicted || 0), 0).toFixed(0)} units
+                    </strong>
                   </div>
                   <div className="flex justify-between">
                     <span>Avg Daily Demand:</span>
-                    <strong>{(chartData.reduce((sum, d) => sum + (d.predicted || 0), 0) / chartData.length).toFixed(1)} units</strong>
+                    <strong>
+                      {(forecast.forecastData.reduce((sum, d) => sum + (d.predicted || 0), 0) / forecast.forecastData.length).toFixed(1)} units
+                    </strong>
                   </div>
                   <div className="flex justify-between">
                     <span>Forecast Period:</span>
-                    <strong>{chartData.length} days</strong>
+                    <strong>{forecast.forecastData.length} days</strong>
+                  </div>
+                  <div className="flex justify-between">
+                    <span>Avg Confidence:</span>
+                    <strong>
+                      {(forecast.forecastData.reduce((sum, d) => sum + (d.confidence || 0), 0) / forecast.forecastData.length * 100).toFixed(0)}%
+                    </strong>
                   </div>
                 </div>
               </div>
-            )}
 
-            {/* Analytics Summary */}
-            {analytics && (
-              <div className="p-4 bg-gradient-to-r from-blue-50 to-cyan-50 dark:from-blue-900/20 dark:to-cyan-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                <div className="flex items-center space-x-2 mb-3">
-                  <Icons.BarChart3 className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-                  <span className="font-medium text-blue-800 dark:text-blue-300">System Overview</span>
-                </div>
-                <div className="space-y-2 text-sm text-blue-700 dark:text-blue-400">
-                  <div className="flex justify-between">
-                    <span>High Priority Items:</span>
-                    <strong className="text-red-600 dark:text-red-400">{analytics.insights.highPriorityCount}</strong>
+              {/* Input Parameters */}
+              {forecast.inputParams && (
+                <div className="p-4 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-800 dark:to-slate-800 rounded-lg border border-gray-200 dark:border-gray-700">
+                  <div className="flex items-center space-x-2 mb-3">
+                    <BarChart3 className="w-5 h-5 text-gray-600 dark:text-gray-400" />
+                    <span className="font-medium text-gray-800 dark:text-gray-300">Input Parameters</span>
                   </div>
-                  <div className="flex justify-between">
-                    <span>Understock Items:</span>
-                    <strong className="text-orange-600 dark:text-orange-400">{analytics.insights.understockCount}</strong>
+                  <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
+                    <p>Daily Sales: <strong>{forecast.inputParams.dailySales}</strong></p>
+                    <p>Weekly Sales: <strong>{forecast.inputParams.weeklySales}</strong></p>
+                    <p>Reorder Level: <strong>{forecast.inputParams.reorderLevel}</strong></p>
+                    <p>Lead Time: <strong>{forecast.inputParams.leadTime} days</strong></p>
+                    {forecast.inputParams.brand && <p>Brand: <strong>{forecast.inputParams.brand}</strong></p>}
+                    {forecast.inputParams.location && <p>Location: <strong>{forecast.inputParams.location}</strong></p>}
                   </div>
-                  <div className="flex justify-between">
-                    <span>Avg Stock Level:</span>
-                    <strong>{analytics.insights.avgStockLevel}</strong>
-                  </div>
-                  <div className="flex justify-between">
-                    <span>Total Forecasts:</span>
-                    <strong>{analytics.insights.totalForecasts}</strong>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* ML Status */}
-            {mlStatus && (
-              <div className="p-4 bg-gradient-to-r from-gray-50 to-slate-50 dark:from-gray-800 dark:to-slate-800 rounded-lg border border-gray-200 dark:border-gray-700">
-                <div className="flex items-center space-x-2 mb-2">
-                  <Icons.Cpu className="w-5 h-5 text-gray-600 dark:text-gray-400" />
-                  <span className="font-medium text-gray-800 dark:text-gray-300">ML Status</span>
-                </div>
-                <div className="space-y-1 text-xs text-gray-600 dark:text-gray-400">
-                  <p>Model: {mlStatus.ml_model_loaded ? '✅' : '❌'} {mlStatus.ml_model_type}</p>
-                  <p>ARIMA: {mlStatus.arima_models_loaded ? `✅ ${mlStatus.arima_models_count} models` : '❌'}</p>
-                  <p>Encoders: {mlStatus.encoders_loaded ? '✅ Loaded' : '❌'}</p>
-                </div>
-              </div>
-            )}
-          </div>
-
-          <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
-            <h4 className="font-medium text-gray-900 dark:text-white mb-4 flex items-center space-x-2">
-              <Icons.Package className="w-5 h-5" />
-              <span>Top Reorders This Week</span>
-            </h4>
-            <div className="space-y-3">
-              {analytics?.topReorders && analytics.topReorders.length > 0 ? (
-                analytics.topReorders.slice(0, 5).map((item, index) => (
-                  <div key={item.sku} className="flex items-center justify-between p-3 bg-gray-50 dark:bg-gray-800 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-750 transition-colors">
-                    <div className="flex-1">
-                      <div className="flex items-center space-x-2">
-                        <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">#{index + 1}</span>
-                        <p className="font-medium text-gray-900 dark:text-white text-sm">{item.sku}</p>
-                      </div>
-                      <p className="text-gray-500 dark:text-gray-400 text-xs mt-1">
-                        {item.name.length > 25 ? item.name.substring(0, 25) + '...' : item.name}
-                      </p>
-                      <p className="text-gray-500 dark:text-gray-400 text-xs">Stock: {item.currentStock}</p>
-                    </div>
-                    <div className="text-right">
-                      <p className="font-semibold text-indigo-600 dark:text-indigo-400 text-lg">{item.predictedDemand}</p>
-                      <p className="text-gray-500 dark:text-gray-400 text-xs">predicted</p>
-                      <span className={`text-xs px-2 py-1 rounded-full inline-block mt-1 ${
-                        item.priority === 'Very High' || item.priority === 'High'
-                          ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
-                          : 'bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-400'
-                      }`}>
-                        {item.priority}
-                      </span>
-                    </div>
-                  </div>
-                ))
-              ) : (
-                <div className="text-center py-4">
-                  <Icons.Package className="w-8 h-8 text-gray-400 mx-auto mb-2" />
-                  <p className="text-gray-500 dark:text-gray-400 text-sm">No reorder data available</p>
                 </div>
               )}
             </div>
-          </div>
 
-          <div className="mt-6 space-y-2">
             <button
-              onClick={fetchData}
-              className="w-full px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center justify-center space-x-2"
+              onClick={() => {
+                setForecast(null);
+                setShowInputForm(true);
+              }}
+              className="w-full mt-6 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition-colors flex items-center justify-center space-x-2"
             >
-              <Icons.RefreshCw className="w-4 h-4" />
-              <span>Refresh Forecasts</span>
+              <RefreshCw className="w-4 h-4" />
+              <span>Generate New Forecast</span>
             </button>
-            <button
-              onClick={handleRunPrediction}
-              disabled={predicting}
-              className="w-full px-4 py-2 bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors disabled:bg-gray-400 flex items-center justify-center space-x-2"
-            >
-              {predicting ? (
-                <>
-                  <Icons.Loader className="w-4 h-4 animate-spin" />
-                  <span>Running...</span>
-                </>
-              ) : (
-                <>
-                  <Icons.Zap className="w-4 h-4" />
-                  <span>Run New Prediction</span>
-                </>
-              )}
-            </button>
+          </motion.div>
+        </div>
+      )}
+
+      {/* Error Display */}
+      {error && !forecast && (
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+          <div className="flex items-center space-x-2">
+            <AlertCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+            <p className="text-red-700 dark:text-red-400">{error}</p>
           </div>
-        </motion.div>
-      </div>
+        </div>
+      )}
     </div>
   );
 };

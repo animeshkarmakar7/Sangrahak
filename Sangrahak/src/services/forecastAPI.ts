@@ -11,6 +11,17 @@ export interface ForecastDataPoint {
   confidence?: number;
 }
 
+export interface InputParams {
+  dailySales: number;
+  weeklySales: number;
+  reorderLevel: number;
+  leadTime: number;
+  brand?: string;
+  category?: string;
+  location?: string;
+  supplierName?: string;
+}
+
 export interface Forecast {
   id: string;
   itemId: string;
@@ -21,40 +32,38 @@ export interface Forecast {
   priorityPred: string;
   alert: string;
   forecastData: ForecastDataPoint[];
+  inputParams?: InputParams;
   updatedAt: string;
 }
 
-export interface ForecastResponse {
-  forecasts: Forecast[];
-  total: number;
-}
-
-export interface TopReorderItem {
+export interface Product {
   sku: string;
   name: string;
-  currentStock: number;
-  priority: string;
-  predictedDemand: number;
+  category?: string;
+  stock?: number;
+  supplier?: string;
 }
 
-export interface ForecastInsights {
-  highPriorityCount: number;
-  understockCount: number;
-  avgStockLevel: number;
-  totalForecasts: number;
-}
-
-export interface ForecastAlert {
+export interface CustomPredictionRequest {
   sku: string;
   productName: string;
-  alert: string;
-  priority: string;
+  currentStock: number;
+  dailySales: number;
+  weeklySales: number;
+  reorderLevel: number;
+  leadTime: number;
+  brand?: string;
+  category?: string;
+  location?: string;
+  supplierName?: string;
+  forecastDays?: number;
 }
 
-export interface ForecastAnalytics {
-  insights: ForecastInsights;
-  topReorders: TopReorderItem[];
-  alerts: ForecastAlert[];
+export interface PredictionResponse {
+  success: boolean;
+  message?: string;
+  forecast?: Forecast;
+  error?: string;
 }
 
 export interface MLStatus {
@@ -65,17 +74,31 @@ export interface MLStatus {
   arima_models_count: number;
 }
 
-export interface PredictionResponse {
-  success: boolean;
-  message?: string;
-  count?: number;
-  forecast?: Forecast;
-  error?: string;
-}
-
 class ForecastAPI {
+  // Get available products from ML API
+  async getProducts(): Promise<{ success: boolean; products: Product[]; count: number }> {
+    try {
+      const response = await axios.get(`${ML_API_URL}/products`);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error fetching products:', error);
+      throw new Error(error.response?.data?.error || 'Failed to fetch products');
+    }
+  }
+
+  // Run custom prediction with user inputs
+  async runCustomPrediction(data: CustomPredictionRequest): Promise<PredictionResponse> {
+    try {
+      const response = await axios.post(`${ML_API_URL}/predict/custom`, data);
+      return response.data;
+    } catch (error: any) {
+      console.error('Error running custom prediction:', error);
+      throw new Error(error.response?.data?.error || 'Failed to run prediction');
+    }
+  }
+
   // Get all forecasts from Express API (MongoDB)
-  async getAll(params?: { limit?: number; sortBy?: string }): Promise<ForecastResponse> {
+  async getAll(params?: { limit?: number; sortBy?: string }): Promise<{ forecasts: Forecast[]; total: number }> {
     try {
       const response = await axios.get(`${EXPRESS_API_URL}/forecasts`, { params });
       return response.data;
@@ -96,40 +119,7 @@ class ForecastAPI {
     }
   }
 
-  // Get forecast analytics from Express API
-  async getAnalytics(): Promise<ForecastAnalytics> {
-    try {
-      const response = await axios.get(`${EXPRESS_API_URL}/forecasts/analytics/insights`);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error fetching analytics:', error);
-      throw new Error(error.response?.data?.message || 'Failed to fetch analytics');
-    }
-  }
-
-  // Trigger ML prediction for all items (Flask ML API)
-  async runPrediction(): Promise<PredictionResponse> {
-    try {
-      const response = await axios.post(`${ML_API_URL}/predict`);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error running prediction:', error);
-      throw new Error(error.response?.data?.error || 'Failed to run prediction');
-    }
-  }
-
-  // Trigger ML prediction for a single item (Flask ML API)
-  async runPredictionForItem(itemId: string): Promise<PredictionResponse> {
-    try {
-      const response = await axios.post(`${ML_API_URL}/predict/${itemId}`);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error running prediction for item:', error);
-      throw new Error(error.response?.data?.error || 'Failed to run prediction for item');
-    }
-  }
-
-  // Check ML model status (Flask ML API)
+  // Check ML model status
   async getMLStatus(): Promise<MLStatus> {
     try {
       const response = await axios.get(`${ML_API_URL}/status`);
@@ -140,7 +130,7 @@ class ForecastAPI {
     }
   }
 
-  // Check ML API health (Flask ML API)
+  // Check ML API health
   async checkMLHealth(): Promise<{ status: string; timestamp: string; models_loaded: boolean }> {
     try {
       const response = await axios.get(`${ML_API_URL}/../health`);
@@ -148,17 +138,6 @@ class ForecastAPI {
     } catch (error: any) {
       console.error('Error checking ML health:', error);
       throw new Error('ML API is not responding');
-    }
-  }
-
-  // Create or update forecast manually (Express API)
-  async createOrUpdate(forecastData: Partial<Forecast>): Promise<{ message: string; forecast: Forecast }> {
-    try {
-      const response = await axios.post(`${EXPRESS_API_URL}/forecasts`, forecastData);
-      return response.data;
-    } catch (error: any) {
-      console.error('Error creating/updating forecast:', error);
-      throw new Error(error.response?.data?.message || 'Failed to save forecast');
     }
   }
 }

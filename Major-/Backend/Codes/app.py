@@ -11,7 +11,6 @@ import os
 import traceback
 
 app = Flask(__name__)
-# CRITICAL: Enable CORS for frontend on port 5173
 CORS(app, resources={
     r"/api/*": {
         "origins": ["http://localhost:5173", "http://localhost:5174"],
@@ -25,8 +24,9 @@ MONGODB_URI = "mongodb+srv://luckyak619_db_user:luckyak619@cluster0.lcmjwhw.mong
 client = MongoClient(MONGODB_URI)
 db = client['inventroops']
 forecasts_collection = db['forecasts']
+products_collection = db['products']
 
-# Global variables to store models
+# Global variables
 ml_model = None
 use_xgb_native = False
 target_encoders = None
@@ -38,7 +38,6 @@ JSON_MODEL_PATH = os.path.join(BASE_PATH, "Models", "ml_stock_priority_model.jso
 PKL_MODEL_PATH = os.path.join(BASE_PATH, "Models", "ml_stock_priority_model.pkl")
 ENCODERS_PATH = os.path.join(BASE_PATH, "Models", "target_label_encoders.pkl")
 ARIMA_PATH = os.path.join(BASE_PATH, "Models", "arima_models_dict.pkl")
-TEST_DATA_PATH = os.path.join(BASE_PATH, "Combinedcsvalerts", "new_test_inventory_input_only.csv")
 
 
 def load_models():
@@ -46,7 +45,6 @@ def load_models():
     global ml_model, use_xgb_native, target_encoders, arima_models
     
     try:
-        # Load ML model
         if os.path.exists(JSON_MODEL_PATH):
             try:
                 ml_model = xgb.Booster()
@@ -61,12 +59,10 @@ def load_models():
             use_xgb_native = False
             print("✅ Loaded ML model from Pickle")
         
-        # Load encoders
         if os.path.exists(ENCODERS_PATH):
             target_encoders = joblib.load(ENCODERS_PATH)
             print("✅ Loaded label encoders")
         
-        # Load ARIMA models
         if os.path.exists(ARIMA_PATH):
             arima_models = joblib.load(ARIMA_PATH)
             print("✅ Loaded ARIMA models")
@@ -97,19 +93,15 @@ def preprocess_data(df):
         if col in target_encoders:
             le = target_encoders[col]
             
-            # Add "Unknown" to classes if missing
             if "Unknown" not in le.classes_:
                 le.classes_ = np.append(le.classes_, "Unknown")
             
-            # Replace unseen labels with "Unknown"
             df[col] = df[col].apply(
                 lambda x: x if x in le.classes_ else "Unknown"
             )
             
-            # Transform with training encoder
             df[col] = le.transform(df[col])
         else:
-            # If encoder not found, just label encode on the fly
             le = LabelEncoder()
             df[col] = le.fit_transform(df[col])
         
@@ -128,7 +120,6 @@ def predict_stock_status(X_test):
     else:
         y_pred_numeric = ml_model.predict(X_test)
     
-    # Handle model output shape
     if isinstance(y_pred_numeric, np.ndarray):
         if y_pred_numeric.ndim == 1:
             y_pred = pd.DataFrame({
@@ -144,7 +135,6 @@ def predict_stock_status(X_test):
     else:
         raise ValueError("Model prediction returned unexpected type")
     
-    # Decode back to labels
     for col in ["stock_status_pred", "priority_pred"]:
         encoder_key = col.replace("_pred", "")
         if encoder_key in target_encoders:
@@ -158,29 +148,27 @@ def predict_stock_status(X_test):
     return y_pred
 
 
-def forecast_sales(item_id, df_test, steps=30):
+def forecast_sales(item_id, historical_sales, steps=30):
     """Forecast future sales using ARIMA"""
     if item_id in arima_models:
         forecast = arima_models[item_id].forecast(steps=steps)
         forecast = np.maximum(forecast, 0)
     else:
-        item_data = df_test[df_test["item_id"] == item_id]
-        if not item_data.empty:
-            forecast = np.array([np.mean(item_data["daily_sales"])] * steps)
-        else:
-            forecast = np.zeros(steps)
+        # Use simple moving average if no ARIMA model
+        avg_sales = np.mean(historical_sales) if len(historical_sales) > 0 else 10
+        forecast = np.array([avg_sales] * steps)
     return forecast
 
 
-def generate_alerts(row, forecast_sales=None):
+def generate_alerts(row, forecast_sales_data=None):
     """Generate alerts based on predictions"""
     alerts = []
     
     if row["stock_status_pred"] == "Understock" or row["priority_pred"] in ["High", "Very High"]:
         alerts.append(f"Immediate Restock Needed: {row['priority_pred']}")
     
-    if forecast_sales is not None:
-        total_forecasted = sum(forecast_sales)
+    if forecast_sales_data is not None:
+        total_forecasted = sum(forecast_sales_data)
         if total_forecasted > row["current_stock"]:
             alerts.append(
                 f"Future Restock Warning: Forecasted sales {int(total_forecasted)} exceed current stock {row['current_stock']}"
@@ -203,7 +191,7 @@ def generate_forecast_data(future_sales, current_date):
             "date": forecast_date.strftime('%Y-%m-%d'),
             "predicted": float(predicted_val),
             "actual": None,
-            "confidence": float(np.random.uniform(0.75, 0.95))  # Mock confidence
+            "confidence": float(np.random.uniform(0.75, 0.95))
         })
     
     return forecast_data
@@ -219,150 +207,144 @@ def health_check():
     })
 
 
-@app.route('/api/ml/predict', methods=['POST', 'OPTIONS'])
-def predict_all():
-    """Run predictions on all inventory items and store in MongoDB"""
-    if request.method == 'OPTIONS':
-        return '', 204
-    
+@app.route('/api/ml/products', methods=['GET'])
+def get_available_products():
+    """Get all products from MongoDB for selection"""
     try:
-        print("🔄 Starting prediction process...")
-        
-        # Load test data
-        if not os.path.exists(TEST_DATA_PATH):
-            return jsonify({
-                "success": False,
-                "error": f"Test data file not found at: {TEST_DATA_PATH}"
-            }), 404
-        
-        print(f"📂 Loading data from: {TEST_DATA_PATH}")
-        df_test = pd.read_csv(TEST_DATA_PATH)
-        print(f"✅ Loaded {len(df_test)} records")
-        
-        # Preprocess data
-        print("🔧 Preprocessing data...")
-        df_test, features = preprocess_data(df_test)
-        X_test = df_test[features]
-        
-        # Predict
-        print("🤖 Running ML predictions...")
-        y_pred = predict_stock_status(X_test)
-        df_test["stock_status_pred"] = y_pred["stock_status_pred"]
-        df_test["priority_pred"] = y_pred["priority_pred"]
-        
-        # Generate forecasts and alerts for each item
-        print("📊 Generating forecasts...")
-        forecasts_to_insert = []
-        
-        for item_id in df_test["item_id"].unique():
-            item_data = df_test[df_test["item_id"] == item_id].sort_values("date").iloc[-1]
-            future_sales = forecast_sales(item_id, df_test, steps=30)
-            alert_text = generate_alerts(item_data, forecast_sales=future_sales)
-            
-            # Generate forecast data points
-            forecast_data = generate_forecast_data(future_sales, item_data["date"])
-            
-            forecast_doc = {
-                "itemId": str(item_id),
-                "productName": str(item_data["product_name"]),
-                "sku": str(item_data.get("sku", item_id)),
-                "currentStock": int(item_data["current_stock"]),
-                "stockStatusPred": str(item_data["stock_status_pred"]),
-                "priorityPred": str(item_data["priority_pred"]),
-                "alert": alert_text,
-                "forecastData": forecast_data,
-                "createdAt": datetime.now(),
-                "updatedAt": datetime.now()
-            }
-            
-            forecasts_to_insert.append(forecast_doc)
-        
-        # Clear existing forecasts and insert new ones
-        print("💾 Saving to MongoDB...")
-        forecasts_collection.delete_many({})
-        if forecasts_to_insert:
-            result = forecasts_collection.insert_many(forecasts_to_insert)
-            print(f"✅ Inserted {len(result.inserted_ids)} forecasts")
-        
-        print(f"🎉 Prediction complete! Generated {len(forecasts_to_insert)} forecasts")
+        products = list(products_collection.find({}, {
+            '_id': 0,
+            'sku': 1,
+            'name': 1,
+            'category': 1,
+            'stock': 1,
+            'supplier': 1
+        }))
         
         return jsonify({
             "success": True,
-            "message": f"Successfully generated {len(forecasts_to_insert)} forecasts",
-            "count": len(forecasts_to_insert)
+            "products": products,
+            "count": len(products)
         })
-    
     except Exception as e:
-        print(f"❌ Error in prediction: {e}")
-        traceback.print_exc()
+        print(f"❌ Error fetching products: {e}")
         return jsonify({
             "success": False,
             "error": str(e)
         }), 500
 
 
-@app.route('/api/ml/predict/<item_id>', methods=['POST', 'OPTIONS'])
-def predict_single(item_id):
-    """Run prediction for a single item"""
+@app.route('/api/ml/predict/custom', methods=['POST', 'OPTIONS'])
+def predict_custom():
+    """Run prediction with custom user inputs"""
     if request.method == 'OPTIONS':
         return '', 204
     
     try:
-        # Load test data
-        df_test = pd.read_csv(TEST_DATA_PATH)
+        data = request.json
+        print(f"🔄 Received prediction request: {data}")
         
-        # Filter for specific item
-        item_df = df_test[df_test["item_id"] == item_id]
+        # Extract user inputs
+        sku = data.get('sku')
+        product_name = data.get('productName')
+        current_stock = float(data.get('currentStock', 0))
+        daily_sales = float(data.get('dailySales', 0))
+        weekly_sales = float(data.get('weeklySales', 0))
+        reorder_level = float(data.get('reorderLevel', 0))
+        lead_time = float(data.get('leadTime', 0))
+        brand = data.get('brand', 'Unknown')
+        category = data.get('category', 'Unknown')
+        location = data.get('location', 'Unknown')
+        supplier_name = data.get('supplierName', 'Unknown')
+        forecast_days = int(data.get('forecastDays', 30))
         
-        if item_df.empty:
-            return jsonify({
-                "success": False,
-                "error": "Item not found"
-            }), 404
+        # Calculate days_to_empty
+        days_to_empty = current_stock / daily_sales if daily_sales > 0 else 999
         
-        # Preprocess data
-        item_df, features = preprocess_data(item_df)
-        X_test = item_df[features]
+        # Create DataFrame for prediction
+        input_data = pd.DataFrame([{
+            'current_stock': current_stock,
+            'daily_sales': daily_sales,
+            'weekly_sales': weekly_sales,
+            'reorder_level': reorder_level,
+            'lead_time': lead_time,
+            'days_to_empty': days_to_empty,
+            'brand': brand,
+            'category': category,
+            'location': location,
+            'supplier_name': supplier_name
+        }])
         
-        # Predict
+        # Preprocess and predict
+        print("🔧 Preprocessing data...")
+        processed_data, features = preprocess_data(input_data)
+        X_test = processed_data[features]
+        
+        print("🤖 Running ML prediction...")
         y_pred = predict_stock_status(X_test)
-        item_df["stock_status_pred"] = y_pred["stock_status_pred"]
-        item_df["priority_pred"] = y_pred["priority_pred"]
         
-        # Get latest record
-        item_data = item_df.sort_values("date").iloc[-1]
+        stock_status_pred = y_pred["stock_status_pred"].iloc[0]
+        priority_pred = y_pred["priority_pred"].iloc[0]
         
-        # Forecast
-        future_sales = forecast_sales(item_id, df_test, steps=30)
-        alert_text = generate_alerts(item_data, forecast_sales=future_sales)
-        forecast_data = generate_forecast_data(future_sales, item_data["date"])
+        # Generate forecast
+        print(f"📊 Generating {forecast_days}-day forecast...")
+        item_id = sku  # Use SKU as item_id
+        historical_sales = [daily_sales] * 7  # Mock historical data
+        future_sales = forecast_sales(item_id, historical_sales, steps=forecast_days)
         
+        # Generate alerts
+        row_data = {
+            'current_stock': current_stock,
+            'stock_status_pred': stock_status_pred,
+            'priority_pred': priority_pred
+        }
+        alert_text = generate_alerts(row_data, forecast_sales_data=future_sales)
+        
+        # Generate forecast data points
+        current_date = datetime.now().strftime('%Y-%m-%d')
+        forecast_data = generate_forecast_data(future_sales, current_date)
+        
+        # Create forecast document
         forecast_doc = {
-            "itemId": str(item_id),
-            "productName": str(item_data["product_name"]),
-            "sku": str(item_data.get("sku", item_id)),
-            "currentStock": int(item_data["current_stock"]),
-            "stockStatusPred": str(item_data["stock_status_pred"]),
-            "priorityPred": str(item_data["priority_pred"]),
+            "itemId": sku,
+            "productName": product_name,
+            "sku": sku,
+            "currentStock": int(current_stock),
+            "stockStatusPred": stock_status_pred,
+            "priorityPred": priority_pred,
             "alert": alert_text,
             "forecastData": forecast_data,
+            "inputParams": {
+                "dailySales": daily_sales,
+                "weeklySales": weekly_sales,
+                "reorderLevel": reorder_level,
+                "leadTime": lead_time,
+                "brand": brand,
+                "category": category,
+                "location": location,
+                "supplierName": supplier_name
+            },
+            "createdAt": datetime.now(),
             "updatedAt": datetime.now()
         }
         
-        # Update or insert in MongoDB
+        # Save to MongoDB
+        print("💾 Saving forecast to MongoDB...")
         forecasts_collection.update_one(
-            {"itemId": str(item_id)},
+            {"sku": sku},
             {"$set": forecast_doc},
             upsert=True
         )
         
+        print(f"✅ Prediction complete for {sku}")
+        
         return jsonify({
             "success": True,
-            "forecast": forecast_doc
+            "forecast": forecast_doc,
+            "message": f"Forecast generated successfully for {product_name}"
         })
     
     except Exception as e:
-        print(f"❌ Error in single prediction: {e}")
+        print(f"❌ Error in custom prediction: {e}")
         traceback.print_exc()
         return jsonify({
             "success": False,
@@ -385,7 +367,6 @@ def model_status():
 if __name__ == '__main__':
     print("🚀 Starting ML Prediction API...")
     
-    # Load models at startup
     if load_models():
         print("✅ All models loaded successfully")
         print("🌐 API running on http://localhost:5001")
