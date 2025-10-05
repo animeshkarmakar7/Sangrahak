@@ -29,4 +29,5 @@ Models/
 *.pkl
 
 # Ignore CSVs in Combined csv alert folder
-/Combined csv alert/*.csv
+Combinedcsvalerts/
+*.csv

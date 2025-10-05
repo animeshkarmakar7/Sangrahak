@@ -11,7 +11,14 @@ import os
 import traceback
 
 app = Flask(__name__)
-CORS(app)
+# CRITICAL: Enable CORS for frontend on port 5173
+CORS(app, resources={
+    r"/api/*": {
+        "origins": ["http://localhost:5173", "http://localhost:5174"],
+        "methods": ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        "allow_headers": ["Content-Type"]
+    }
+})
 
 # MongoDB Configuration
 MONGODB_URI = "mongodb+srv://luckyak619_db_user:luckyak619@cluster0.lcmjwhw.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0"
@@ -31,7 +38,7 @@ JSON_MODEL_PATH = os.path.join(BASE_PATH, "Models", "ml_stock_priority_model.jso
 PKL_MODEL_PATH = os.path.join(BASE_PATH, "Models", "ml_stock_priority_model.pkl")
 ENCODERS_PATH = os.path.join(BASE_PATH, "Models", "target_label_encoders.pkl")
 ARIMA_PATH = os.path.join(BASE_PATH, "Models", "arima_models_dict.pkl")
-TEST_DATA_PATH = os.path.join(BASE_PATH, "Combined csv alerts", "new_test_inventory_input_only.csv")
+TEST_DATA_PATH = os.path.join(BASE_PATH, "Combinedcsvalerts", "new_test_inventory_input_only.csv")
 
 
 def load_models():
@@ -212,29 +219,39 @@ def health_check():
     })
 
 
-@app.route('/api/ml/predict', methods=['POST'])
+@app.route('/api/ml/predict', methods=['POST', 'OPTIONS'])
 def predict_all():
     """Run predictions on all inventory items and store in MongoDB"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     try:
+        print("🔄 Starting prediction process...")
+        
         # Load test data
         if not os.path.exists(TEST_DATA_PATH):
             return jsonify({
                 "success": False,
-                "error": "Test data file not found"
+                "error": f"Test data file not found at: {TEST_DATA_PATH}"
             }), 404
         
+        print(f"📂 Loading data from: {TEST_DATA_PATH}")
         df_test = pd.read_csv(TEST_DATA_PATH)
+        print(f"✅ Loaded {len(df_test)} records")
         
         # Preprocess data
+        print("🔧 Preprocessing data...")
         df_test, features = preprocess_data(df_test)
         X_test = df_test[features]
         
         # Predict
+        print("🤖 Running ML predictions...")
         y_pred = predict_stock_status(X_test)
         df_test["stock_status_pred"] = y_pred["stock_status_pred"]
         df_test["priority_pred"] = y_pred["priority_pred"]
         
         # Generate forecasts and alerts for each item
+        print("📊 Generating forecasts...")
         forecasts_to_insert = []
         
         for item_id in df_test["item_id"].unique():
@@ -261,9 +278,13 @@ def predict_all():
             forecasts_to_insert.append(forecast_doc)
         
         # Clear existing forecasts and insert new ones
+        print("💾 Saving to MongoDB...")
         forecasts_collection.delete_many({})
         if forecasts_to_insert:
-            forecasts_collection.insert_many(forecasts_to_insert)
+            result = forecasts_collection.insert_many(forecasts_to_insert)
+            print(f"✅ Inserted {len(result.inserted_ids)} forecasts")
+        
+        print(f"🎉 Prediction complete! Generated {len(forecasts_to_insert)} forecasts")
         
         return jsonify({
             "success": True,
@@ -280,9 +301,12 @@ def predict_all():
         }), 500
 
 
-@app.route('/api/ml/predict/<item_id>', methods=['POST'])
+@app.route('/api/ml/predict/<item_id>', methods=['POST', 'OPTIONS'])
 def predict_single(item_id):
     """Run prediction for a single item"""
+    if request.method == 'OPTIONS':
+        return '', 204
+    
     try:
         # Load test data
         df_test = pd.read_csv(TEST_DATA_PATH)
@@ -365,6 +389,7 @@ if __name__ == '__main__':
     if load_models():
         print("✅ All models loaded successfully")
         print("🌐 API running on http://localhost:5001")
+        print("🔗 CORS enabled for http://localhost:5173")
         app.run(debug=True, port=5001, host='0.0.0.0')
     else:
         print("❌ Failed to load models. Please check model paths.")
