@@ -93,10 +93,16 @@ export const productsAPI = {
   },
 };
 
-// Depots API
+// Add these methods to your depotsAPI in services/api.ts
+
 export const depotsAPI = {
   getAll: async () => {
     const response = await api.get('/depots');
+    return response.data;
+  },
+
+  getById: async (id: string) => {
+    const response = await api.get(`/depots/${id}`);
     return response.data;
   },
 
@@ -110,11 +116,23 @@ export const depotsAPI = {
     return response.data;
   },
 
+  updateUtilization: async (id: string, data: { currentUtilization?: number; itemsStored?: number }) => {
+    const response = await api.patch(`/depots/${id}/utilization`, data);
+    return response.data;
+  },
+
   delete: async (id: string) => {
     const response = await api.delete(`/depots/${id}`);
     return response.data;
   },
+
+  getStats: async () => {
+    const response = await api.get('/depots/stats/overview');
+    return response.data;
+  },
 };
+
+
 
 // Alerts API
 export const alertsAPI = {

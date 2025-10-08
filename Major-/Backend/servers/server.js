@@ -499,7 +499,11 @@ app.get('/api/products/categories', async (req, res) => {
   }
 });
 
-// DEPOT ROUTES
+// Add these routes to your server.js file (replace existing depot routes)
+
+// DEPOT ROUTES - COMPLETE CRUD
+
+// Get all depots
 app.get('/api/depots', async (req, res) => {
   try {
     const depots = await Depot.find().sort({ updatedAt: -1 });
@@ -511,7 +515,9 @@ app.get('/api/depots', async (req, res) => {
         capacity: depot.capacity,
         currentUtilization: depot.currentUtilization,
         itemsStored: depot.itemsStored,
-        status: depot.status
+        status: depot.status,
+        createdAt: depot.createdAt,
+        updatedAt: depot.updatedAt
       }))
     });
   } catch (error) {
@@ -520,9 +526,38 @@ app.get('/api/depots', async (req, res) => {
   }
 });
 
+// Get single depot by ID
+app.get('/api/depots/:id', async (req, res) => {
+  try {
+    const depot = await Depot.findById(req.params.id);
+    if (!depot) {
+      return res.status(404).json({ message: 'Depot not found' });
+    }
+    res.json({
+      depot: {
+        id: depot._id,
+        name: depot.name,
+        location: depot.location,
+        capacity: depot.capacity,
+        currentUtilization: depot.currentUtilization,
+        itemsStored: depot.itemsStored,
+        status: depot.status,
+        createdAt: depot.createdAt,
+        updatedAt: depot.updatedAt
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching depot:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Create new depot
 app.post('/api/depots', async (req, res) => {
   try {
     const depot = new Depot(req.body);
+    
+    // Calculate status based on utilization
     const utilizationPercentage = (depot.currentUtilization / depot.capacity) * 100;
     if (utilizationPercentage >= 95) {
       depot.status = 'critical';
@@ -531,7 +566,20 @@ app.post('/api/depots', async (req, res) => {
     } else {
       depot.status = 'normal';
     }
+    
     await depot.save();
+
+    // Create alert if capacity is critical
+    if (depot.status === 'critical' || depot.status === 'warning') {
+      const alert = new Alert({
+        type: 'capacity-warning',
+        title: `Depot ${depot.status === 'critical' ? 'Critical' : 'Warning'} Capacity`,
+        description: `${depot.name} is at ${utilizationPercentage.toFixed(1)}% capacity utilization`,
+        severity: depot.status === 'critical' ? 'high' : 'medium',
+        depotId: depot._id
+      });
+      await alert.save();
+    }
 
     res.status(201).json({
       message: 'Depot created successfully',
@@ -551,6 +599,128 @@ app.post('/api/depots', async (req, res) => {
   }
 });
 
+// Update depot
+app.put('/api/depots/:id', async (req, res) => {
+  try {
+    const depot = await Depot.findById(req.params.id);
+    if (!depot) {
+      return res.status(404).json({ message: 'Depot not found' });
+    }
+
+    // Update fields
+    Object.assign(depot, req.body);
+    depot.updatedAt = new Date();
+
+    // Recalculate status based on utilization
+    const utilizationPercentage = (depot.currentUtilization / depot.capacity) * 100;
+    if (utilizationPercentage >= 95) {
+      depot.status = 'critical';
+    } else if (utilizationPercentage >= 85) {
+      depot.status = 'warning';
+    } else {
+      depot.status = 'normal';
+    }
+
+    await depot.save();
+
+    // Create/update alert if capacity is critical or warning
+    if (depot.status === 'critical' || depot.status === 'warning') {
+      const existingAlert = await Alert.findOne({
+        depotId: depot._id,
+        type: 'capacity-warning',
+        isResolved: false
+      });
+
+      if (!existingAlert) {
+        const alert = new Alert({
+          type: 'capacity-warning',
+          title: `Depot ${depot.status === 'critical' ? 'Critical' : 'Warning'} Capacity`,
+          description: `${depot.name} is at ${utilizationPercentage.toFixed(1)}% capacity utilization`,
+          severity: depot.status === 'critical' ? 'high' : 'medium',
+          depotId: depot._id
+        });
+        await alert.save();
+      }
+    } else {
+      // Resolve existing alerts if status is now normal
+      await Alert.updateMany(
+        { depotId: depot._id, type: 'capacity-warning', isResolved: false },
+        { isResolved: true, resolvedAt: new Date() }
+      );
+    }
+
+    res.json({
+      message: 'Depot updated successfully',
+      depot: {
+        id: depot._id,
+        name: depot.name,
+        location: depot.location,
+        capacity: depot.capacity,
+        currentUtilization: depot.currentUtilization,
+        itemsStored: depot.itemsStored,
+        status: depot.status
+      }
+    });
+  } catch (error) {
+    console.error('Error updating depot:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Delete depot
+app.delete('/api/depots/:id', async (req, res) => {
+  try {
+    const depot = await Depot.findByIdAndDelete(req.params.id);
+    if (!depot) {
+      return res.status(404).json({ message: 'Depot not found' });
+    }
+    
+    // Delete associated alerts
+    await Alert.deleteMany({ depotId: req.params.id });
+    
+    res.json({ message: 'Depot deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting depot:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
+
+// Get depot statistics
+app.get('/api/depots/stats/overview', async (req, res) => {
+  try {
+    const depots = await Depot.find();
+    
+    const totalDepots = depots.length;
+    const totalCapacity = depots.reduce((sum, depot) => sum + depot.capacity, 0);
+    const totalUtilization = depots.reduce((sum, depot) => sum + depot.currentUtilization, 0);
+    const totalItems = depots.reduce((sum, depot) => sum + depot.itemsStored, 0);
+    
+    const avgUtilization = totalDepots > 0 
+      ? (totalUtilization / totalCapacity) * 100 
+      : 0;
+    
+    const criticalCount = depots.filter(d => d.status === 'critical').length;
+    const warningCount = depots.filter(d => d.status === 'warning').length;
+    const normalCount = depots.filter(d => d.status === 'normal').length;
+
+    res.json({
+      stats: {
+        totalDepots,
+        totalCapacity,
+        totalUtilization,
+        totalItems,
+        avgUtilization: avgUtilization.toFixed(1),
+        criticalCount,
+        warningCount,
+        normalCount,
+        needsAttention: criticalCount + warningCount
+      }
+    });
+  } catch (error) {
+    console.error('Error fetching depot stats:', error);
+    res.status(500).json({ message: 'Server error', error: error.message });
+  }
+});
 // ALERT ROUTES
 app.get('/api/alerts', async (req, res) => {
   try {
